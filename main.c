@@ -1,17 +1,18 @@
 #include <stdio.h>
 #include "soniclib.h"
 #include "chirp_bsp.h"
+#include "periph/gpio.h"
 #include "periph/i2c.h"
 
 #include "saml21_cpu_debug.h"
 #include "saml21_backup_mode.h"
 #include "ultrasound_display_config_info.h"
 
+#define WAKEUP_PIN  GPIO_PIN(PA, 6)
+
 #define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
-#define CHIRP_SENSOR_MODE		        CH_MODE_FREERUN
-#define CHIRP_SENSOR_TARGET_INT		    CH_TGT_INT_FILTER_ANY
-#define CHIRP_SENSOR_TARGET_INT_HIST	5		// num of previous results kept in history
-#define CHIRP_SENSOR_TARGET_INT_THRESH  3		// num of target detections req'd to interrupt
+#define CHIRP_SENSOR_TARGET_INT_HIST	1		// num of previous results kept in history
+#define CHIRP_SENSOR_TARGET_INT_THRESH  1		// num of target detections req'd to interrupt
 #define CHIRP_SENSOR_TARGET_INT_RESET   0		// if non-zero, target filter resets after interrupt
 #define	CHIRP_SENSOR_MAX_RANGE_MM		4000	/* maximum range, in mm */
 #define	CHIRP_SENSOR_THRESHOLD_0		0	/* close range threshold (0 = use default) */
@@ -19,7 +20,6 @@
 #define	CHIRP_SENSOR_RX_HOLDOFF			0	/* # of samples to ignore at start of meas */
 #define	CHIRP_SENSOR_RX_LOW_GAIN		0	/* # of samples (0 = use default) */
 #define	CHIRP_SENSOR_TX_LENGTH			0	/* Tx pulse length, in cycles (0 = use default) */
-#define	CHIRP_SENSOR_STR_RANGE		    0		/* STR range, in samples (0 = entire meas range) */
 #define	MEASUREMENT_INTERVAL_MS		    1000	// 1000ms interval = 1Hz sampling
 
 /* Bit flags used in main loop to check for completion of I/O or timer operations.  */
@@ -35,57 +35,37 @@ chirp_data_t chirp_data[CHIRP_MAX_NUM_SENSORS];
 ch_dev_t     chirp_devices[CHIRP_MAX_NUM_SENSORS];
 ch_group_t   chirp_group;
 
-volatile uint32_t taskflags = 0;
 static uint32_t active_devices;
-static uint32_t data_ready_devices;
 static uint8_t num_connected_sensors = 0;
-static uint8_t  num_triggered_devices = 0;
 
-static void sensor_int_callback(ch_group_t *grp_ptr, uint8_t dev_num,
-                                ch_interrupt_type_t __attribute__((unused)) int_type)
-{
-    ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
-    data_ready_devices |= (1 << dev_num);       // add to data-ready bit mask
-    if (data_ready_devices == active_devices) {
-        /* All active sensors have interrupted after performing a measurement */
-        data_ready_devices = 0;
-        /* Set data-ready flag - it will be checked and cleared in main() loop */
-        taskflags |= DATA_READY_FLAG;
-        /* Disable interrupt unless in free-running mode
-         *   It will automatically be re-enabled by the next ch_group_trigger()
-         */
-        if (ch_get_mode(dev_ptr) == CH_MODE_FREERUN) {
-            chdrv_int_set_dir_in(dev_ptr);              // set INT line as input
-            chdrv_int_group_interrupt_enable(grp_ptr);
-        } else {
-            chdrv_int_group_interrupt_disable(grp_ptr);
-        }
-    }
-}
-
-static uint8_t handle_data_ready(ch_group_t *grp_ptr) {
-    uint8_t     dev_num;
-    uint8_t     ret_val = 0;
+static void handle_data_ready(void) {
+    puts("DATA READY!");
+/*
+    uint8_t dev_num;
+    uint8_t ret_val = 0;
     for (dev_num = 0; dev_num < ch_get_num_ports(grp_ptr); dev_num++) {
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
             chirp_data[dev_num].range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ONE_WAY);
             if (chirp_data[dev_num].range != CH_NO_TARGET) {
-                /* Because sensor is in target interrupt mode, it should only interrupt
-                 * if a target was successfully detected, and this should always be true */
-                 /* Get the new amplitude value - it's only updated if range
-                  * was successfully measured.  */
                 chirp_data[dev_num].amplitude = ch_get_amplitude(dev_ptr);
                 uint32_t range =chirp_data[dev_num].range;
                 printf("Port %d: Range: %0.1f mm   Amplitude: %u  ",
                         dev_num,
                         (float) range/32.0f,
                         chirp_data[dev_num].amplitude);
-            printf("\n");
+                printf("\n");
             }
         }
     }
-    return ret_val;
+*/
+}
+
+static void sensor_int_callback(ch_group_t *grp_ptr, uint8_t dev_num,
+                                ch_interrupt_type_t __attribute__((unused)) int_type)
+{
+    (void)dev_num;
+    chdrv_int_group_interrupt_enable(grp_ptr);
 }
 
 void sensors_init(void)
@@ -143,27 +123,15 @@ void sensors_init(void)
         ch_config_t dev_config;
         ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
         if (ch_sensor_is_connected(dev_ptr)) {
-            num_connected_sensors++;            // count one more connected
-            active_devices |= (1 << dev_num);   // add to active device bit mask
-            dev_config.mode = CHIRP_SENSOR_MODE;
-            if (dev_config.mode != CH_MODE_FREERUN) {   // unless free-running
-                num_triggered_devices++;                // will be triggered
-            }
-            dev_config.tgt_int_filter = CHIRP_SENSOR_TARGET_INT;
+            num_connected_sensors++;
+            active_devices |= (1 << dev_num);
+            dev_config.mode = CH_MODE_FREERUN;
+            dev_config.tgt_int_filter = CH_TGT_INT_FILTER_ANY;
             ch_set_target_int_counter(dev_ptr, CHIRP_SENSOR_TARGET_INT_HIST,
                                       CHIRP_SENSOR_TARGET_INT_THRESH, CHIRP_SENSOR_TARGET_INT_RESET);
             dev_config.max_range = CHIRP_SENSOR_MAX_RANGE_MM;
-            if (CHIRP_SENSOR_STR_RANGE != 0) {
-                dev_config.static_range = CHIRP_SENSOR_STR_RANGE;
-            } else {
-                dev_config.static_range = ch_mm_to_samples(dev_ptr, CHIRP_SENSOR_MAX_RANGE_MM);
-            }
-            /* If sensor will be free-running, set internal sample interval */
-            if (dev_config.mode == CH_MODE_FREERUN) {
-                dev_config.sample_interval = MEASUREMENT_INTERVAL_MS;
-            } else {
-                dev_config.sample_interval = 0;
-            }
+            dev_config.static_range = ch_mm_to_samples(dev_ptr, CHIRP_SENSOR_MAX_RANGE_MM);
+            dev_config.sample_interval = MEASUREMENT_INTERVAL_MS;
             dev_config.thresh_ptr = NULL;
             /* Apply sensor configuration */
             chirp_error = ch_set_config(dev_ptr, &dev_config);
@@ -239,18 +207,16 @@ void sensors_init(void)
 
 int main(void)
 {
-    sensors_init();
-    printf("Starting measurements\n");
-    while (1) {     /* LOOP FOREVER */
-        if (taskflags==0) {
-            chbsp_proc_sleep();         // put processor in low-power sleep mode
-            /* We only continue here after an interrupt wakes the processor */
-        }
-        if (taskflags & DATA_READY_FLAG) {
-            /* Sensor has interrupted - handle sensor data */
-            taskflags &= ~DATA_READY_FLAG;      // clear flag
-            handle_data_ready(&chirp_group);    // read and display measurement
-        }
-    }   // end  while(1) main loop
+    switch(saml21_wakeup_cause()) {
+        case BACKUP_EXTWAKE:
+            handle_data_ready();
+            break;
+        default:
+            sensors_init();
+            break;
+    }
+    puts("Entering backup mode.");
+    saml21_backup_mode_enter(WAKEUP_PIN, -1);
+    // never reached
     return 0;
 }
