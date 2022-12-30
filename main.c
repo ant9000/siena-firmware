@@ -240,6 +240,7 @@ void sensors_init(void)
 
 void freeze_data(void)
 {
+    // WARNING: any pointer inside the structures will be dangling after a reset!!!
     fram_erase();
     fram_write(0, (void *)&chirp_devices, sizeof(chirp_devices));
     fram_write(sizeof(chirp_devices), (void *)&chirp_group, sizeof(chirp_group));
@@ -248,6 +249,7 @@ void freeze_data(void)
 
 void thaw_data(void)
 {
+    // WARNING: any pointer inside the structures will be dangling after a reset!!!
     fram_read(0, (void *)&chirp_devices, sizeof(chirp_devices));
     fram_read(sizeof(chirp_devices), (void *)&chirp_group, sizeof(chirp_group));
     puts("Chirp sensor data thawed.");
