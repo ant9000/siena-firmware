@@ -9,7 +9,8 @@
 #include "saml21_backup_mode.h"
 #include "ultrasound_display_config_info.h"
 
-#define WAKEUP_PIN  GPIO_PIN(PA, 6)
+#define WAKEUP_PIN  6
+#define FRAM_POWER  GPIO_PIN(PA, 27)
 
 #define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
 #define CHIRP_SENSOR_TARGET_INT_HIST	1		// num of previous results kept in history
@@ -31,10 +32,10 @@ ch_group_t   chirp_group;
 
 static uint32_t active_devices;
 static uint8_t num_connected_sensors = 0;
-
 volatile uint32_t taskflags = 0;
 
-int read_word(uint8_t dev_num, uint16_t mem_addr, uint16_t * data_ptr) {
+int read_word(uint8_t dev_num, uint16_t mem_addr, uint16_t * data_ptr)
+{
     int error;
     // TODO
     uint8_t bus_num  = chirp_devices[dev_num].bus_index;
@@ -45,7 +46,8 @@ int read_word(uint8_t dev_num, uint16_t mem_addr, uint16_t * data_ptr) {
     return error;
 }
 
-uint32_t get_range(uint8_t dev_num, ch_range_t range_type) {
+uint32_t get_range(uint8_t dev_num, ch_range_t range_type)
+{
     uint8_t     tof_reg;
     uint8_t     tof_sf_reg;
     uint32_t    range = CH_NO_TARGET;
@@ -71,7 +73,8 @@ uint32_t get_range(uint8_t dev_num, ch_range_t range_type) {
     return range;
 }
 
-uint16_t get_amplitude(uint8_t dev_num) {
+uint16_t get_amplitude(uint8_t dev_num)
+{
     uint8_t  amplitude_reg;
     uint16_t amplitude;
     amplitude_reg = CH201_GPRSTR_REG_AMPLITUDE;
@@ -79,7 +82,8 @@ uint16_t get_amplitude(uint8_t dev_num) {
     return amplitude;
 }
 
-static void handle_data_ready(void) {
+static void handle_data_ready(void)
+{
     uint32_t range;
     uint16_t amplitude;
     puts("DATA READY!");
@@ -234,35 +238,41 @@ void sensors_init(void)
 
 }
 
-void freeze_data(void) {
+void freeze_data(void)
+{
     fram_erase();
     fram_write(0, (void *)&chirp_devices, sizeof(chirp_devices));
     fram_write(sizeof(chirp_devices), (void *)&chirp_group, sizeof(chirp_group));
+    puts("Chirp sensor data freezed.");
 }
 
-void thaw_data(void) {
+void thaw_data(void)
+{
     fram_read(0, (void *)&chirp_devices, sizeof(chirp_devices));
     fram_read(sizeof(chirp_devices), (void *)&chirp_group, sizeof(chirp_group));
+    puts("Chirp sensor data thawed.");
 }
 
-int main(void)
+void board_startup(void)
 {
+    gpio_init(FRAM_POWER, GPIO_OUT);
+    gpio_set(FRAM_POWER);
     fram_init();
-    switch(saml21_wakeup_cause()) {
-        case BACKUP_EXTWAKE:
-            thaw_data();
-            handle_data_ready();
-            break;
-        default:
-            sensors_init();
-            freeze_data();
-            break;
-    }
-/*
-    puts("Entering backup mode.");
-    saml21_backup_mode_enter(WAKEUP_PIN, -1);
-*/
+}
 
+void board_sleep(void)
+{
+    puts("Entering backup mode.");
+    gpio_clear(FRAM_POWER);
+    i2c_deinit_pins(I2C_DEV(0));
+    i2c_deinit_pins(I2C_DEV(1));
+    i2c_deinit_pins(I2C_DEV(2));
+    saml21_backup_mode_enter(WAKEUP_PIN, -1);
+}
+
+void board_loop(void)
+{
+    puts("Starting measurements.");
     while (1) {
         if (taskflags==0) {
             chbsp_proc_sleep();
@@ -273,6 +283,26 @@ int main(void)
             handle_data_ready();
         }
     }
+}
+
+int main(void)
+{
+    board_startup();
+    switch(saml21_wakeup_cause()) {
+        case BACKUP_EXTWAKE:
+            thaw_data();
+            handle_data_ready();
+            break;
+        default:
+            sensors_init();
+            freeze_data();
+            break;
+    }
+#ifdef BACKUP_MODE
+    board_sleep();
+#else
+    board_loop();
+#endif
     // never reached
     return 0;
 }

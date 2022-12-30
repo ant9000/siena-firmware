@@ -8,6 +8,7 @@ EXTERNAL_PKG_DIRS=$(LORA3ABASE)/pkg
 DEVELHELP ?= 1
 QUIET ?= 1
 PORT ?= /dev/ttyUSB0
+BACKUP_MODE ?= 1
 
 USEMODULE += saml21_cpu_debug
 USEMODULE += saml21_backup_mode
@@ -16,8 +17,11 @@ USEMODULE += saul_default
 USEMODULE += at24c16a
 USEPKG += soniclib
 
-#CFLAGS += -DCHDRV_DEBUG=1
 CFLAGS += -DENABLE_ACME1
 CFLAGS += -DENABLE_ACME2
+
+ifeq ($(BACKUP_MODE), 1)
+  CFLAGS += -DBACKUP_MODE
+endif
 
 include $(RIOTBASE)/Makefile.include
