@@ -15,6 +15,7 @@ USEMODULE += saml21_backup_mode
 USEMODULE += printf_float
 USEMODULE += saul_default
 USEMODULE += at24c16a
+USEMODULE += sx1276
 USEPKG += soniclib
 
 CFLAGS += -DENABLE_ACME1
