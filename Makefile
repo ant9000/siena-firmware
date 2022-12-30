@@ -13,6 +13,7 @@ USEMODULE += saml21_cpu_debug
 USEMODULE += saml21_backup_mode
 USEMODULE += printf_float
 USEMODULE += saul_default
+USEMODULE += at24c16a
 USEPKG += soniclib
 
 #CFLAGS += -DCHDRV_DEBUG=1

@@ -4,6 +4,7 @@
 #include "periph/gpio.h"
 #include "periph/i2c.h"
 
+#include "fram.h"
 #include "saml21_cpu_debug.h"
 #include "saml21_backup_mode.h"
 #include "ultrasound_display_config_info.h"
@@ -25,46 +26,79 @@
 /* Bit flags used in main loop to check for completion of I/O or timer operations.  */
 #define DATA_READY_FLAG     (1 << 0)        // data ready from sensor
 
-typedef struct {
-    uint32_t        range;       // from ch_get_range()
-    uint16_t        amplitude;   // from ch_get_amplitude()
-    uint16_t        num_samples; // from ch_get_num_samples()
-} chirp_data_t;
-
-chirp_data_t chirp_data[CHIRP_MAX_NUM_SENSORS];
 ch_dev_t     chirp_devices[CHIRP_MAX_NUM_SENSORS];
 ch_group_t   chirp_group;
 
 static uint32_t active_devices;
 static uint8_t num_connected_sensors = 0;
 
-static void handle_data_ready(void) {
-    puts("DATA READY!");
-/*
-    uint8_t dev_num;
-    uint8_t ret_val = 0;
-    for (dev_num = 0; dev_num < ch_get_num_ports(grp_ptr); dev_num++) {
-        ch_dev_t *dev_ptr = ch_get_dev_ptr(grp_ptr, dev_num);
-        if (ch_sensor_is_connected(dev_ptr)) {
-            chirp_data[dev_num].range = ch_get_range(dev_ptr, CH_RANGE_ECHO_ONE_WAY);
-            if (chirp_data[dev_num].range != CH_NO_TARGET) {
-                chirp_data[dev_num].amplitude = ch_get_amplitude(dev_ptr);
-                uint32_t range =chirp_data[dev_num].range;
-                printf("Port %d: Range: %0.1f mm   Amplitude: %u  ",
-                        dev_num,
-                        (float) range/32.0f,
-                        chirp_data[dev_num].amplitude);
-                printf("\n");
+volatile uint32_t taskflags = 0;
+
+int read_word(uint8_t dev_num, uint16_t mem_addr, uint16_t * data_ptr) {
+    int error;
+    // TODO
+    uint8_t bus_num  = chirp_devices[dev_num].bus_index;
+    uint8_t i2c_addr = chirp_devices[dev_num].i2c_address;
+    i2c_acquire(bus_num);
+    error = i2c_read_regs(bus_num, i2c_addr, mem_addr, (uint8_t *)data_ptr, 2, 0);
+    i2c_release(bus_num);
+    return error;
+}
+
+uint32_t get_range(uint8_t dev_num, ch_range_t range_type) {
+    uint8_t     tof_reg;
+    uint8_t     tof_sf_reg;
+    uint32_t    range = CH_NO_TARGET;
+    uint16_t    time_of_flight;
+    uint16_t    scale_factor;
+    int         err;
+
+    tof_reg = CH201_GPRSTR_REG_TOF;
+    err = read_word(dev_num, tof_reg, &time_of_flight);
+    if (!err && (time_of_flight != UINT16_MAX)) { // If object detected
+        tof_sf_reg = CH201_GPRSTR_REG_TOF_SF;
+        err = read_word(dev_num, tof_sf_reg, &scale_factor);
+        if (scale_factor != 0) {
+            uint32_t num = (CH_SPEEDOFSOUND_MPS * (uint32_t) chirp_group.rtc_cal_pulse_ms * (uint32_t) time_of_flight);
+            uint32_t den = ((uint32_t) chirp_devices[dev_num].rtc_cal_result * (uint32_t) scale_factor) >> 11;
+            range = (num / den);
+            range *= 2;
+            if (range_type == CH_RANGE_ECHO_ONE_WAY) {
+                range /= 2;
             }
         }
     }
-*/
+    return range;
+}
+
+uint16_t get_amplitude(uint8_t dev_num) {
+    uint8_t  amplitude_reg;
+    uint16_t amplitude;
+    amplitude_reg = CH201_GPRSTR_REG_AMPLITUDE;
+    read_word(dev_num, amplitude_reg, &amplitude);
+    return amplitude;
+}
+
+static void handle_data_ready(void) {
+    uint32_t range;
+    uint16_t amplitude;
+    puts("DATA READY!");
+    for (size_t i=0; i < CHIRP_MAX_NUM_SENSORS; i++) {
+        if (chirp_devices[i].sensor_connected) {
+            range = get_range(i, CH_RANGE_ECHO_ONE_WAY);
+            if (range != CH_NO_TARGET) {
+                amplitude = get_amplitude(i);
+                printf("Port %u   Range: %0.1f mm   Amplitude: %u\n", i, (float) range/32.0f, amplitude);
+            }
+        }
+    }
 }
 
 static void sensor_int_callback(ch_group_t *grp_ptr, uint8_t dev_num,
                                 ch_interrupt_type_t __attribute__((unused)) int_type)
 {
     (void)dev_num;
+    taskflags = 1;
     chdrv_int_group_interrupt_enable(grp_ptr);
 }
 
@@ -194,29 +228,51 @@ void sensors_init(void)
                 printf("  reset=%s", reset ? "yes":"no");
             }
             printf("\n");
-            /* Get number of active samples per measurement */
-            chirp_data[dev_num].num_samples = ch_get_num_samples(dev_ptr);
-            /* Turn on an LED to indicate device connected */
-            if (!chirp_error) {
-                chbsp_led_on(dev_num);
-            }
         }
     }
     printf("\n");
+
+}
+
+void freeze_data(void) {
+    fram_erase();
+    fram_write(0, (void *)&chirp_devices, sizeof(chirp_devices));
+    fram_write(sizeof(chirp_devices), (void *)&chirp_group, sizeof(chirp_group));
+}
+
+void thaw_data(void) {
+    fram_read(0, (void *)&chirp_devices, sizeof(chirp_devices));
+    fram_read(sizeof(chirp_devices), (void *)&chirp_group, sizeof(chirp_group));
 }
 
 int main(void)
 {
+    fram_init();
     switch(saml21_wakeup_cause()) {
         case BACKUP_EXTWAKE:
+            thaw_data();
             handle_data_ready();
             break;
         default:
             sensors_init();
+            freeze_data();
             break;
     }
+/*
     puts("Entering backup mode.");
     saml21_backup_mode_enter(WAKEUP_PIN, -1);
+*/
+
+    while (1) {
+        if (taskflags==0) {
+            chbsp_proc_sleep();
+            /* We only continue here after an interrupt wakes the processor */
+        } else {
+            /* Sensor has interrupted - handle sensor data */
+            taskflags = 0;
+            handle_data_ready();
+        }
+    }
     // never reached
     return 0;
 }
