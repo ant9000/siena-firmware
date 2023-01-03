@@ -10,7 +10,7 @@
 #include "saml21_backup_mode.h"
 #include "ultrasound_display_config_info.h"
 
-#define WAKEUP_PIN  6
+#define EXTWAKE { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }
 #define FRAM_POWER  GPIO_PIN(PA, 27)
 
 #define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
@@ -27,6 +27,8 @@
 
 /* Bit flags used in main loop to check for completion of I/O or timer operations.  */
 #define DATA_READY_FLAG     (1 << 0)        // data ready from sensor
+
+static saml21_extwake_t extwake = EXTWAKE;
 
 ch_dev_t     chirp_devices[CHIRP_MAX_NUM_SENSORS];
 ch_group_t   chirp_group;
@@ -289,7 +291,7 @@ void board_sleep(void)
         gpio_init(i2c_config[i].sda_pin, GPIO_IN_PU);
     }
 
-    saml21_backup_mode_enter(WAKEUP_PIN, -1);
+    saml21_backup_mode_enter(extwake, -1);
 }
 
 void board_loop(void)
