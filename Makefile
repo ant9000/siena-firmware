@@ -10,12 +10,15 @@ QUIET ?= 1
 PORT ?= /dev/ttyUSB0
 BACKUP_MODE ?= 1
 
+USEMODULE += hdc3020
 USEMODULE += saml21_cpu_debug
 USEMODULE += saml21_backup_mode
 USEMODULE += printf_float
 USEMODULE += saul_default
+USEMODULE += periph_adc
 USEMODULE += at24c16a
 USEMODULE += sx1276
+USEMODULE += ztimer_msec
 USEPKG += soniclib
 
 CFLAGS += -DENABLE_ACME1

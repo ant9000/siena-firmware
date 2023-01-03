@@ -3,11 +3,24 @@
 #include "chirp_bsp.h"
 #include "periph/gpio.h"
 #include "periph/i2c.h"
+#include "periph/adc.h"
+
 
 #include "fram.h"
 #include "saml21_cpu_debug.h"
 #include "saml21_backup_mode.h"
 #include "ultrasound_display_config_info.h"
+#include "hdc3020.h"
+#include "hdc3020_params.h"
+#include "ztimer.h"
+
+#if defined(BOARD_LORA3A_H10)
+#define ADC_VCC    (0)
+#define ADC_VPANEL (1)
+#define VPANEL_ENABLE  GPIO_PIN(PA, 27)
+#endif
+
+
 
 #define EXTWAKE { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }
 #define FRAM_POWER  GPIO_PIN(PA, 27)
@@ -16,7 +29,7 @@
 #define CHIRP_SENSOR_TARGET_INT_HIST	1		// num of previous results kept in history
 #define CHIRP_SENSOR_TARGET_INT_THRESH  1		// num of target detections req'd to interrupt
 #define CHIRP_SENSOR_TARGET_INT_RESET   0		// if non-zero, target filter resets after interrupt
-#define	CHIRP_SENSOR_MAX_RANGE_MM		4000	/* maximum range, in mm */
+#define	CHIRP_SENSOR_MAX_RANGE_MM		2000	/* maximum range, in mm */
 #define	CHIRP_SENSOR_THRESHOLD_0		0	/* close range threshold (0 = use default) */
 #define	CHIRP_SENSOR_THRESHOLD_1		0	/* standard threshold (0 = use default) */
 #define	CHIRP_SENSOR_RX_HOLDOFF			0	/* # of samples to ignore at start of meas */
@@ -35,6 +48,8 @@ ch_group_t   chirp_group;
 static uint32_t active_devices;
 static uint8_t num_connected_sensors = 0;
 volatile uint32_t taskflags = 0;
+
+static hdc3020_t hdc3020;
 
 int read_word(uint8_t dev_num, uint16_t mem_addr, uint16_t * data_ptr)
 {
@@ -107,6 +122,37 @@ static void sensor_int_callback(ch_group_t *grp_ptr, uint8_t dev_num,
     taskflags = 1;
     chdrv_int_group_interrupt_enable(grp_ptr);
 }
+
+void internal_sensors_init(void)
+{
+    puts("Internal Sensors init.");
+    if (hdc3020_init(&hdc3020, hdc3020_params) == HDC3020_OK) {
+        puts("HDC3020 init.");
+    }
+}
+
+void internal_sensors_read(void)
+{
+    double temp, hum;
+    int32_t vcc;
+    int32_t vpanel;
+
+    puts("Internal Sensors read.");
+    if (hdc3020_init(&hdc3020, hdc3020_params) == HDC3020_OK) {
+        if (hdc3020_read(&hdc3020, &temp, &hum) == HDC3020_OK) {
+            printf("Temp: %.1f °C, RH: %.1f %%\n", temp, hum);
+        }
+    }
+    // read vcc
+    vcc = adc_sample(ADC_VCC, ADC_RES_12BIT)*4000/4095;  // corrected value (1V = 4095 counts)
+    // read vpanel
+    ztimer_sleep(ZTIMER_MSEC, 30);
+    vpanel = adc_sample(ADC_VPANEL, ADC_RES_12BIT)*3933/4095; // adapted to real resistor partition value (75k over 220k)
+    printf("V_supercap (mV): %ld; Vpanel(mV) = %ld\n", vcc, vpanel);
+
+    hdc3020_deinit(&hdc3020);
+}
+
 
 void sensors_init(void)
 {
@@ -279,7 +325,7 @@ void board_sleep(void)
         gpio_init(i2c_config[i].sda_pin, GPIO_IN_PU);
     }
 
-    saml21_backup_mode_enter(extwake, -1);
+    saml21_backup_mode_enter(extwake, 10);
 }
 
 void board_loop(void)
@@ -305,7 +351,12 @@ int main(void)
             thaw_data();
             handle_data_ready();
             break;
+        case BACKUP_RTC:
+			printf(" Periodic Wakeup !\n");
+			internal_sensors_read();
+            break;
         default:
+            internal_sensors_init();
             sensors_init();
             freeze_data();
             break;
