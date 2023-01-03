@@ -5,7 +5,6 @@
 #include "periph/i2c.h"
 
 #include "fram.h"
-#include "sx127x_params.h"
 #include "saml21_cpu_debug.h"
 #include "saml21_backup_mode.h"
 #include "ultrasound_display_config_info.h"
@@ -271,17 +270,6 @@ void board_sleep(void)
 
     // turn off FRAM
     gpio_clear(FRAM_POWER);
-
-    // turn radio off
-    sx127x_t sx127x;
-    sx127x.params = sx127x_params[0];
-    spi_init(sx127x.params.spi);
-    gpio_set(TCXO_PWR_PIN);
-    sx127x_init(&sx127x);
-    sx127x_reset(&sx127x);
-    sx127x_set_sleep(&sx127x);
-    gpio_clear(TCXO_PWR_PIN);
-    gpio_clear(TX_OUTPUT_SEL_PIN);
 
     // turn I2C devices off (leave internal bus I2C_DEV(0) alone)
     for(size_t i = 1; i < I2C_NUMOF; i++) {
