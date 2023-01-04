@@ -36,6 +36,18 @@
 #define	CHIRP_SENSOR_TX_LENGTH			0	/* Tx pulse length, in cycles (0 = use default) */
 #define	MEASUREMENT_INTERVAL_MS		    1000	// 1000ms interval = 1Hz sampling
 
+#ifndef EMB_ADDRESS
+	#define EMB_ADDRESS 1
+#endif
+#ifndef SLEEP_TIME_SEC
+	#define SLEEP_TIME_SEC 5
+#endif
+#ifndef LISTEN_TIME_MSEC
+	// use 450 if BW 125kHz
+	#define LISTEN_TIME_MSEC 150
+#endif
+
+
 /* Bit flags used in main loop to check for completion of I/O or timer operations.  */
 #define DATA_READY_FLAG     (1 << 0)        // data ready from sensor
 
@@ -53,6 +65,22 @@ static hdc3020_t hdc3020;
 static lora_state_t lora;
 static uint16_t emb_counter = 0;
 
+char message[MAX_PACKET_LEN];
+static struct {
+    uint8_t cpuid[CPUID_LEN];
+    int32_t vcc;
+    int32_t vpanel;
+    double temp;
+    double hum;
+    uint32_t range;
+    uint16_t amplitude;
+} measures;
+
+void waitCurrentMeasure(uint32_t milliseconds, char* step) {
+	printf("waitCurrentMeasure %s\n", step);
+	ztimer_sleep(ZTIMER_MSEC, milliseconds);
+}	
+
 void send_to(uint8_t dst, char *buffer, size_t len)
 {
     embit_header_t header;
@@ -63,7 +91,9 @@ void send_to(uint8_t dst, char *buffer, size_t len)
     header.src = EMB_ADDRESS;
     printf("Sending %d+%d bytes packet #%u to 0x%02X:\n", EMB_HEADER_LEN, len, emb_counter, dst);
     printf("%s\n", buffer);
+  lora_init(&lora);
     protocol_out(&header, buffer, len);
+  lora_off();
     puts("Sent.");
 }
 
@@ -117,18 +147,18 @@ uint16_t get_amplitude(uint8_t dev_num)
 
 static void handle_data_ready(void)
 {
-    uint32_t range;
-    uint16_t amplitude;
+//    uint32_t range;
+//    uint16_t amplitude;
     char message[MAX_PACKET_LEN];
 
     puts("DATA READY!");
     for (size_t i=0; i < CHIRP_MAX_NUM_SENSORS; i++) {
         if (chirp_devices[i].sensor_connected) {
-            range = get_range(i, CH_RANGE_ECHO_ONE_WAY);
-            if (range != CH_NO_TARGET) {
-                amplitude = get_amplitude(i);
-                printf("Port %u   Range: %0.1f mm   Amplitude: %u\n", i, (float) range/32.0f, amplitude);
-                snprintf(message, sizeof(message), "Port %u   Range: %0.1f mm   Amplitude: %u\n", i, (float) range/32.0f, amplitude);
+            measures.range = get_range(i, CH_RANGE_ECHO_ONE_WAY);
+            if (measures.range != CH_NO_TARGET) {
+                measures.amplitude = get_amplitude(i);
+                printf("Port %u   Range: %0.1f mm   Amplitude: %u\n", i, (float) measures.range/32.0f, measures.amplitude);
+				snprintf(message, sizeof(message), "Temp: %.1f °C, RH: %.1f %%, Vsupercap (mV): %ld, Vpanel(mV): %ld, Port %u, Range (mm): %0.1f, Amplitude: %u\n", measures.temp, measures.hum, measures.vcc, measures.vpanel, i, (float) measures.range/32.0f, measures.amplitude);
                 send_to(EMB_BROADCAST, message, strlen(message)+1);
             }
         }
@@ -153,28 +183,28 @@ void internal_sensors_init(void)
 
 void internal_sensors_read(void)
 {
-    double temp = 999, hum = 999;
-    int32_t vcc;
-    int32_t vpanel;
-    char message[MAX_PACKET_LEN];
+//    double temp = 999, hum = 999;
+//    int32_t vcc;
+//    int32_t vpanel;
+//    char message[MAX_PACKET_LEN];
 
     puts("Internal Sensors read.");
     if (hdc3020_init(&hdc3020, hdc3020_params) == HDC3020_OK) {
-        if (hdc3020_read(&hdc3020, &temp, &hum) == HDC3020_OK) {
-            printf("Temp: %.1f °C, RH: %.1f %%\n", temp, hum);
+        if (hdc3020_read(&hdc3020, &measures.temp, &measures.hum) == HDC3020_OK) {
+            printf("Temp: %.1f °C, RH: %.1f %%\n", measures.temp, measures.hum);
         }
     }
     // read vcc
-    vcc = adc_sample(ADC_VCC, ADC_RES_12BIT)*4000/4095;  // corrected value (1V = 4095 counts)
+    measures.vcc = adc_sample(ADC_VCC, ADC_RES_12BIT)*4000/4095;  // corrected value (1V = 4095 counts)
     // read vpanel
     ztimer_sleep(ZTIMER_MSEC, 30);
-    vpanel = adc_sample(ADC_VPANEL, ADC_RES_12BIT)*3933/4095; // adapted to real resistor partition value (75k over 220k)
-    printf("Vsupercap (mV): %ld; Vpanel(mV): %ld\n", vcc, vpanel);
+    measures.vpanel = adc_sample(ADC_VPANEL, ADC_RES_12BIT)*3933/4095; // adapted to real resistor partition value (75k over 220k)
+    printf("Vsupercap (mV): %ld; Vpanel(mV): %ld\n", measures.vcc, measures.vpanel);
 
     hdc3020_deinit(&hdc3020);
 
-    snprintf(message, sizeof(message), "Temp: %.1f °C, RH: %.1f %%, Vsupercap (mV): %ld, Vpanel(mV): %ld\n", temp, hum, vcc, vpanel);
-    send_to(EMB_BROADCAST, message, strlen(message)+1);
+//    snprintf(message, sizeof(message), "Temp: %.1f °C, RH: %.1f %%, Vsupercap (mV): %ld, Vpanel(mV): %ld\n", temp, hum, vcc, vpanel);
+//    send_to(EMB_BROADCAST, message, strlen(message)+1);
 }
 
 
@@ -328,6 +358,7 @@ void thaw_data(void)
 {
     size_t offset = 0;
     // WARNING: any pointer inside the structures will be dangling after a reset!!!
+    gpio_set(FRAM_POWER);
     fram_read(offset, (void *)&chirp_devices, sizeof(chirp_devices));
     offset += sizeof(chirp_devices);
     fram_read(offset, (void *)&chirp_group, sizeof(chirp_group));
@@ -346,6 +377,9 @@ void board_startup(void)
     lora.channel          = DEFAULT_LORA_CHANNEL;
     lora.power            = DEFAULT_LORA_POWER;
     lora_init(&lora);
+    lora_off();
+	snprintf(message, sizeof(message), "Start Demo Siena\n");
+	send_to(EMB_BROADCAST, message, strlen(message)+1);
 
     gpio_init(FRAM_POWER, GPIO_OUT);
     gpio_set(FRAM_POWER);
@@ -357,7 +391,7 @@ void board_sleep(void)
     puts("Entering backup mode.");
 
     // turn radio off
-    lora_off();
+//    lora_off();
 
     // turn off FRAM
     gpio_clear(FRAM_POWER);
@@ -370,7 +404,7 @@ void board_sleep(void)
         gpio_init(i2c_config[i].sda_pin, GPIO_IN_PU);
     }
 
-    saml21_backup_mode_enter(extwake, 10);
+    saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, 10);
 }
 
 void board_loop(void)
@@ -390,15 +424,23 @@ void board_loop(void)
 
 int main(void)
 {
+	puts("\n");
+	printf("SIENA-FIRMWARE Compiled: %s,%s\n", __DATE__, __TIME__);
+
     board_startup();
+	printf("Sensor set: Address: %d Bandwidth: %d, Frequency: %ld\n            Spreading Factor: %d, Coderate: %d, Listen Time ms: %d\n", 
+			EMB_ADDRESS, lora.bandwidth, lora.channel, lora.spreading_factor, lora.coderate, LISTEN_TIME_MSEC);
     switch(saml21_wakeup_cause()) {
         case BACKUP_EXTWAKE:
+			internal_sensors_read();
             thaw_data();
             handle_data_ready();
             break;
         case BACKUP_RTC:
 			printf(" Periodic Wakeup !\n");
 			internal_sensors_read();
+			snprintf(message, sizeof(message), "Temp: %.1f °C, RH: %.1f %%, Vsupercap (mV): %ld, Vpanel(mV): %ld, Port %u, Range (mm): %0.1f, Amplitude: %u\n", measures.temp, measures.hum, measures.vcc, measures.vpanel, 9999, 9999.9, 9999);
+			send_to(EMB_BROADCAST, message, strlen(message)+1);
             break;
         default:
             internal_sensors_init();
