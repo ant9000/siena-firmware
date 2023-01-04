@@ -16,6 +16,7 @@ USEMODULE += saml21_backup_mode
 USEMODULE += printf_float
 USEMODULE += saul_default
 USEMODULE += periph_adc
+USEMODULE += periph_spi_reconfigure
 USEMODULE += at24c16a
 USEMODULE += sx1276
 USEMODULE += ztimer_msec

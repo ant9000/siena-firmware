@@ -5,7 +5,8 @@
 #include "periph/i2c.h"
 #include "periph/adc.h"
 
-
+#include "lora.h"
+#include "protocol.h"
 #include "fram.h"
 #include "saml21_cpu_debug.h"
 #include "saml21_backup_mode.h"
@@ -19,8 +20,6 @@
 #define ADC_VPANEL (1)
 #define VPANEL_ENABLE  GPIO_PIN(PA, 27)
 #endif
-
-
 
 #define EXTWAKE { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }
 #define FRAM_POWER  GPIO_PIN(PA, 27)
@@ -50,6 +49,23 @@ static uint8_t num_connected_sensors = 0;
 volatile uint32_t taskflags = 0;
 
 static hdc3020_t hdc3020;
+
+static lora_state_t lora;
+static uint16_t emb_counter = 0;
+
+void send_to(uint8_t dst, char *buffer, size_t len)
+{
+    embit_header_t header;
+    header.signature = EMB_SIGNATURE;
+    header.counter = ++emb_counter;
+    header.network = EMB_NETWORK;
+    header.dst = dst;
+    header.src = EMB_ADDRESS;
+    printf("Sending %d+%d bytes packet #%u to 0x%02X:\n", EMB_HEADER_LEN, len, emb_counter, dst);
+    printf("%s\n", buffer);
+    protocol_out(&header, buffer, len);
+    puts("Sent.");
+}
 
 int read_word(uint8_t dev_num, uint16_t mem_addr, uint16_t * data_ptr)
 {
@@ -103,6 +119,8 @@ static void handle_data_ready(void)
 {
     uint32_t range;
     uint16_t amplitude;
+    char message[MAX_PACKET_LEN];
+
     puts("DATA READY!");
     for (size_t i=0; i < CHIRP_MAX_NUM_SENSORS; i++) {
         if (chirp_devices[i].sensor_connected) {
@@ -110,6 +128,8 @@ static void handle_data_ready(void)
             if (range != CH_NO_TARGET) {
                 amplitude = get_amplitude(i);
                 printf("Port %u   Range: %0.1f mm   Amplitude: %u\n", i, (float) range/32.0f, amplitude);
+                snprintf(message, sizeof(message), "Port %u   Range: %0.1f mm   Amplitude: %u\n", i, (float) range/32.0f, amplitude);
+                send_to(EMB_BROADCAST, message, strlen(message)+1);
             }
         }
     }
@@ -133,9 +153,10 @@ void internal_sensors_init(void)
 
 void internal_sensors_read(void)
 {
-    double temp, hum;
+    double temp = 999, hum = 999;
     int32_t vcc;
     int32_t vpanel;
+    char message[MAX_PACKET_LEN];
 
     puts("Internal Sensors read.");
     if (hdc3020_init(&hdc3020, hdc3020_params) == HDC3020_OK) {
@@ -148,9 +169,12 @@ void internal_sensors_read(void)
     // read vpanel
     ztimer_sleep(ZTIMER_MSEC, 30);
     vpanel = adc_sample(ADC_VPANEL, ADC_RES_12BIT)*3933/4095; // adapted to real resistor partition value (75k over 220k)
-    printf("V_supercap (mV): %ld; Vpanel(mV) = %ld\n", vcc, vpanel);
+    printf("Vsupercap (mV): %ld; Vpanel(mV): %ld\n", vcc, vpanel);
 
     hdc3020_deinit(&hdc3020);
+
+    snprintf(message, sizeof(message), "Temp: %.1f °C, RH: %.1f %%, Vsupercap (mV): %ld, Vpanel(mV): %ld\n", temp, hum, vcc, vpanel);
+    send_to(EMB_BROADCAST, message, strlen(message)+1);
 }
 
 
@@ -288,23 +312,41 @@ void sensors_init(void)
 
 void freeze_data(void)
 {
+    size_t offset = 0;
     // WARNING: any pointer inside the structures will be dangling after a reset!!!
     fram_erase();
-    fram_write(0, (void *)&chirp_devices, sizeof(chirp_devices));
-    fram_write(sizeof(chirp_devices), (void *)&chirp_group, sizeof(chirp_group));
+    fram_write(offset, (void *)&chirp_devices, sizeof(chirp_devices));
+    offset += sizeof(chirp_devices);
+    fram_write(offset, (void *)&chirp_group, sizeof(chirp_group));
+    offset += sizeof(chirp_group);
+    fram_write(offset, (void *)&emb_counter, sizeof(emb_counter));
+    offset += sizeof(emb_counter);
     puts("Chirp sensor data freezed.");
 }
 
 void thaw_data(void)
 {
+    size_t offset = 0;
     // WARNING: any pointer inside the structures will be dangling after a reset!!!
-    fram_read(0, (void *)&chirp_devices, sizeof(chirp_devices));
-    fram_read(sizeof(chirp_devices), (void *)&chirp_group, sizeof(chirp_group));
+    fram_read(offset, (void *)&chirp_devices, sizeof(chirp_devices));
+    offset += sizeof(chirp_devices);
+    fram_read(offset, (void *)&chirp_group, sizeof(chirp_group));
+    offset += sizeof(chirp_group);
+    fram_read(offset, (void *)&emb_counter, sizeof(emb_counter));
+    offset += sizeof(emb_counter);
     puts("Chirp sensor data thawed.");
 }
 
 void board_startup(void)
 {
+    memset(&lora, 0, sizeof(lora));
+    lora.bandwidth        = DEFAULT_LORA_BANDWIDTH;
+    lora.spreading_factor = DEFAULT_LORA_SPREADING_FACTOR;
+    lora.coderate         = DEFAULT_LORA_CODERATE;
+    lora.channel          = DEFAULT_LORA_CHANNEL;
+    lora.power            = DEFAULT_LORA_POWER;
+    lora_init(&lora);
+
     gpio_init(FRAM_POWER, GPIO_OUT);
     gpio_set(FRAM_POWER);
     fram_init();
@@ -313,6 +355,9 @@ void board_startup(void)
 void board_sleep(void)
 {
     puts("Entering backup mode.");
+
+    // turn radio off
+    lora_off();
 
     // turn off FRAM
     gpio_clear(FRAM_POWER);
