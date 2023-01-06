@@ -14,6 +14,8 @@
 #include "hdc3020.h"
 #include "hdc3020_params.h"
 #include "ztimer.h"
+#include "periph/rtc_mem.h"
+
 
 #if defined(BOARD_LORA3A_H10)
 #define ADC_VCC    (0)
@@ -21,7 +23,9 @@
 #define VPANEL_ENABLE  GPIO_PIN(PA, 27)
 #endif
 
-#define EXTWAKE { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }
+
+
+#define EXTWAKE { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }  // put EXTWAKE_LOW fo TDK present; EXTWAKE_HIGH for no TDK present
 #define FRAM_POWER  GPIO_PIN(PA, 27)
 
 #define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
@@ -66,6 +70,18 @@ static lora_state_t lora;
 static uint16_t emb_counter = 0;
 
 char message[MAX_PACKET_LEN];
+
+static struct {
+    uint16_t sleep_seconds;
+    uint16_t message_counter;
+    int16_t last_rssi;
+    int8_t last_snr;
+    uint8_t tx_power;
+    uint8_t boost;
+    uint8_t retries;
+    uint8_t tdkon;   // 0=off; 1=on
+} persist;
+
 static struct {
     uint8_t cpuid[CPUID_LEN];
     int32_t vcc;
@@ -85,11 +101,11 @@ void send_to(uint8_t dst, char *buffer, size_t len)
 {
     embit_header_t header;
     header.signature = EMB_SIGNATURE;
-    header.counter = ++emb_counter;
+    header.counter = ++persist.message_counter;
     header.network = EMB_NETWORK;
     header.dst = dst;
     header.src = EMB_ADDRESS;
-    printf("Sending %d+%d bytes packet #%u to 0x%02X:\n", EMB_HEADER_LEN, len, emb_counter, dst);
+    printf("Sending %d+%d bytes packet #%u to 0x%02X signature:%x network:%x source:%x :\n", EMB_HEADER_LEN, len, persist.message_counter, dst, header.signature, header.network, header.src);
     printf("%s\n", buffer);
   lora_init(&lora);
     protocol_out(&header, buffer, len);
@@ -158,9 +174,19 @@ static void handle_data_ready(void)
             if (measures.range != CH_NO_TARGET) {
                 measures.amplitude = get_amplitude(i);
                 printf("Port %u   Range: %0.1f mm   Amplitude: %u\n", i, (float) measures.range/32.0f, measures.amplitude);
-				snprintf(message, sizeof(message), "Temp: %.1f °C, RH: %.1f %%, Vsupercap (mV): %ld, Vpanel(mV): %ld, Port %u, Range (mm): %0.1f, Amplitude: %u\n", measures.temp, measures.hum, measures.vcc, measures.vpanel, i, (float) measures.range/32.0f, measures.amplitude);
+				snprintf(message, sizeof(message),
+				"vcc:%ld,vpan:%ld,temp:%.2f,hum:%.2f,txp:%c:%d,rxdb:%d,rxsnr:%d,sleep:%d,Range(mm):%d,Ampl:%u",
+				measures.vcc, measures.vpanel, measures.temp,
+				measures.hum, persist.boost?'B':'R', persist.tx_power, 
+				persist.last_rssi, persist.last_snr, persist.sleep_seconds, (int)(measures.range/32.0f), measures.amplitude);
+
+//				snprintf(message, sizeof(message), 
+//				"Temp: %.1f °C, RH: %.1f %%, Vsupercap (mV): %ld, Vpanel(mV): %ld, Port %u, Range (mm): %0.1f, Amplitude: %u\n", 
+//				measures.temp, measures.hum, measures.vcc, measures.vpanel, i, (float) measures.range/32.0f, measures.amplitude);
                 send_to(EMB_BROADCAST, message, strlen(message)+1);
-            }
+            } else {
+				printf("\nNO_TARGET !!! %f\n\n", (float)measures.range);
+			}
         }
     }
 }
@@ -378,8 +404,6 @@ void board_startup(void)
     lora.power            = DEFAULT_LORA_POWER;
     lora_init(&lora);
     lora_off();
-	snprintf(message, sizeof(message), "Start Demo Siena\n");
-	send_to(EMB_BROADCAST, message, strlen(message)+1);
 
     gpio_init(FRAM_POWER, GPIO_OUT);
     gpio_set(FRAM_POWER);
@@ -389,6 +413,7 @@ void board_startup(void)
 void board_sleep(void)
 {
     puts("Entering backup mode.");
+	printf("Persist.tdkon = %d\n", persist.tdkon);
 
     // turn radio off
 //    lora_off();
@@ -403,6 +428,7 @@ void board_sleep(void)
         gpio_init(i2c_config[i].scl_pin, GPIO_IN_PU);
         gpio_init(i2c_config[i].sda_pin, GPIO_IN_PU);
     }
+    rtc_mem_write(0, (char *)&persist, sizeof(persist));
 
     saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, 10);
 }
@@ -430,24 +456,63 @@ int main(void)
     board_startup();
 	printf("Sensor set: Address: %d Bandwidth: %d, Frequency: %ld\n            Spreading Factor: %d, Coderate: %d, Listen Time ms: %d\n", 
 			EMB_ADDRESS, lora.bandwidth, lora.channel, lora.spreading_factor, lora.coderate, LISTEN_TIME_MSEC);
+	printf("Wakeup cause = %d\n\n",saml21_wakeup_cause());
     switch(saml21_wakeup_cause()) {
         case BACKUP_EXTWAKE:
+	        rtc_mem_read(0, (char *)&persist, sizeof(persist));
+			printf(" Persist.tdkon = %d\n", persist.tdkon);
 			internal_sensors_read();
             thaw_data();
             handle_data_ready();
             break;
         case BACKUP_RTC:
+	        rtc_mem_read(0, (char *)&persist, sizeof(persist));
+			printf(" Persist.tdkon = %d\n", persist.tdkon);
 			printf(" Periodic Wakeup !\n");
 			internal_sensors_read();
-			snprintf(message, sizeof(message), "Temp: %.1f °C, RH: %.1f %%, Vsupercap (mV): %ld, Vpanel(mV): %ld, Port %u, Range (mm): %0.1f, Amplitude: %u\n", measures.temp, measures.hum, measures.vcc, measures.vpanel, 9999, 9999.9, 9999);
+			if (persist.tdkon == 0) {  // if tdk is off
+				if (measures.vpanel > 1000) { 
+//				if (0) { 
+					sensors_init();
+					gpio_set(FRAM_POWER);
+					freeze_data();
+					persist.tdkon = 1;
+				}	
+			} else {  // tdk is on
+				if (measures.vpanel < 1000) { 
+//				if (0) { 
+					// switch off TDK to save power
+//					gpio_clear(GPIO_PIN(PA, 31));
+//			waitCurrentMeasure(10000, "waiting switch off TDK 10s");
+					persist.tdkon = 0;
+				}	
+			}		
+			snprintf(message, sizeof(message),
+			"vcc:%ld,vpan:%ld,temp:%.2f,hum:%.2f,txp:%c:%d,rxdb:%d,rxsnr:%d,sleep:%d,Range(mm):%d,Ampl:%u",
+			measures.vcc, measures.vpanel, measures.temp,
+			measures.hum, persist.boost?'B':'R', persist.tx_power, 
+			persist.last_rssi, persist.last_snr, persist.sleep_seconds, (int)(measures.range/32.0f), measures.amplitude);
+//			snprintf(message, sizeof(message), "Temp: %.1f °C, RH: %.1f %%, Vsupercap (mV): %ld, Vpanel(mV): %ld, Port %u, Range (mm): %0.1f, Amplitude: %u\n", measures.temp, measures.hum, measures.vcc, measures.vpanel, 9999, 9999.9, 9999);
 			send_to(EMB_BROADCAST, message, strlen(message)+1);
             break;
         default:
-            internal_sensors_init();
-            sensors_init();
-            freeze_data();
+	snprintf(message, sizeof(message), "Start Demo Siena\n");
+	send_to(EMB_BROADCAST, message, strlen(message)+1);
+			puts("\nDefault\n\n");
+			gpio_clear(FRAM_POWER);
+			gpio_clear(GPIO_PIN(PA, 31));
+            internal_sensors_read();
+            persist.tdkon = 0;
+//			if (measures.vpanel > 1000) { 
+			if (1) { 
+				sensors_init();
+				gpio_set(FRAM_POWER);
+				freeze_data();
+				persist.tdkon = 1;
+			}	
             break;
     }
+
 #ifdef BACKUP_MODE
     board_sleep();
 #else

@@ -110,8 +110,8 @@ int lora_write(const iolist_t *packet)
         len = -1;
     } else {
         // wait for end of transmission
-        uint32_t delay = sx127x_get_time_on_air(&sx127x, len);
-        if (ztimer_mutex_lock_timeout(ZTIMER_USEC, &lora_transmission_lock, delay * 1000 + 10) != 0) {
+        uint32_t delay = sx127x_get_time_on_air(&sx127x, len);  // it seems that time_on_air is not very accurate. To be investigated better
+        if (ztimer_mutex_lock_timeout(ZTIMER_USEC, &lora_transmission_lock, delay * 1000 + 50) != 0) { // ex + 10
             puts("TX TIMEOUT");
             len = -1;
         }

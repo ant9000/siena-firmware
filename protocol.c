@@ -40,6 +40,8 @@ void protocol_in(const char *buffer, size_t len, int16_t *rssi, int8_t *snr)
 
 void protocol_out(const embit_header_t *header, const char *buffer, const size_t len)
 {
+    HEXDUMP("TRANSMIT HEADER:", header, sizeof(embit_header_t));
+    HEXDUMP("TRANSMIT PAYLOAD:", buffer, len);
     iolist_t packet, payload;
     mutex_lock(&lora_lock);
     packet.iol_base = (void *)header;
