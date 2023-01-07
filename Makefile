@@ -9,6 +9,9 @@ DEVELHELP ?= 1
 QUIET ?= 1
 PORT ?= /dev/ttyUSB0
 BACKUP_MODE ?= 1
+ADDRESS ?= 2
+AES ?= 0
+
 
 USEMODULE += od
 USEMODULE += od_string
@@ -22,6 +25,7 @@ USEMODULE += periph_spi_reconfigure
 USEMODULE += at24c16a
 USEMODULE += sx1276
 USEMODULE += ztimer_msec
+USEMODULE += ztimer_usec
 USEMODULE += periph_rtc_mem
 USEPKG += soniclib
 
@@ -31,5 +35,10 @@ CFLAGS += -DENABLE_ACME2
 ifeq ($(BACKUP_MODE), 1)
   CFLAGS += -DBACKUP_MODE
 endif
+
+ifneq (,$(ADDRESS))
+  CFLAGS += -DEMB_ADDRESS=$(ADDRESS)
+endif
+
 
 include $(RIOTBASE)/Makefile.include

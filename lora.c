@@ -21,7 +21,7 @@ static sx127x_t sx127x;
 static char lora_buffer[MAX_PACKET_LEN];
 static netdev_lora_rx_info_t lora_packet_info;
 
-static lora_data_cb_t *lora_data_cb = NULL;
+static lora_data_cb_t *lora_data_cb;
 static void _lora_event_cb(netdev_t *dev, netdev_event_t event);
 void *_lora_recv_thread(void *arg);
 

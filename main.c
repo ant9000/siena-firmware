@@ -43,14 +43,23 @@
 #ifndef EMB_ADDRESS
 	#define EMB_ADDRESS 1
 #endif
+
+#ifndef EMB_NETWORK
+#define EMB_NETWORK 1
+#endif
+
 #ifndef SLEEP_TIME_SEC
 	#define SLEEP_TIME_SEC 5
 #endif
 #ifndef LISTEN_TIME_MSEC
-	// use 450 if BW 125kHz
+	// use 450 if BW 125kHz; 150 if BW 500kHz
 	#define LISTEN_TIME_MSEC 150
 #endif
 
+static embit_packet_t q_packet;
+static int gateway_received_rssi;
+static char q_payload[MAX_PACKET_LEN];
+static kernel_pid_t main_pid;
 
 /* Bit flags used in main loop to check for completion of I/O or timer operations.  */
 #define DATA_READY_FLAG     (1 << 0)        // data ready from sensor
@@ -67,7 +76,6 @@ volatile uint32_t taskflags = 0;
 static hdc3020_t hdc3020;
 
 static lora_state_t lora;
-static uint16_t emb_counter = 0;
 
 char message[MAX_PACKET_LEN];
 
@@ -80,6 +88,8 @@ static struct {
     uint8_t boost;
     uint8_t retries;
     uint8_t tdkon;   // 0=off; 1=on
+    uint16_t lastRange;  // maintain the range measured in the last wakeup to be able to check for changes
+    uint8_t sensorStatus;
 } persist;
 
 static struct {
@@ -97,6 +107,102 @@ void waitCurrentMeasure(uint32_t milliseconds, char* step) {
 	ztimer_sleep(ZTIMER_MSEC, milliseconds);
 }	
 
+void parse_command(char *ptr, size_t len) {
+	char *token;
+	int8_t txpow=0;
+	puts("parse_command\n");
+    if((len > 2) && (strlen(ptr) == (size_t)(len-1)) && (ptr[0] == '@') && (ptr[len-2] == '$')) {
+		token = strtok(ptr+1, ",");
+        uint32_t seconds = strtoul(token, NULL, 0);
+//seconds = 5;        
+        printf("Instructed to sleep for %lu seconds\n", seconds);
+
+        persist.sleep_seconds = (seconds > 0 ) && (seconds < 36000) ? (uint16_t)seconds : SLEEP_TIME_SEC;
+        if ((uint32_t)persist.sleep_seconds != seconds) {
+            printf("Corrected sleep value: %u seconds\n", persist.sleep_seconds);
+        }
+        token = strtok(NULL, ",");
+        
+//token[0] = 'B';
+        
+        if (token[0]=='B') {
+			printf("Boost out selected!\n");
+			persist.boost = 1;
+		} else {
+			printf("RFO out selected!\n");
+			persist.boost = 0;
+		}
+        token = strtok(NULL, "$");
+        txpow = atoi(token);
+//txpow = 14;
+        if (txpow!=0) {
+			persist.tx_power = txpow;
+			printf("Instructed to tx at level %d\n",txpow);
+		}
+        // to be added a complete error recovery/received commands validation for transmission errors
+    }
+}
+
+ssize_t packet_received(const embit_packet_t *packet)
+{
+    // discard packets if not for us and not broadcast
+    printf("packet->header.dst = %d\n", packet->header.dst);
+    if ((packet->header.dst != EMB_ADDRESS) && (packet->header.dst != EMB_BROADCAST)) { return 0; }
+
+
+    // dump message to stdout
+    printf(
+        "{\"CNT\":%u,\"NET\":%u,\"DST\":%u,\"SRC\":%u,\"RSSI\":%d,\"SNR\":%d,\"LEN\"=%d,\"DATA\"=\"%s\"}\n",
+        packet->header.counter, packet->header.network, packet->header.dst, packet->header.src,
+        packet->rssi, packet->snr, packet->payload_len, packet->payload
+    );
+    msg_t msg;
+    memcpy(q_payload, packet->payload, packet->payload_len);
+    memcpy(&q_packet, packet, sizeof(embit_packet_t));
+    q_packet.payload = q_payload;
+    gateway_received_rssi = packet->rssi;
+    msg.content.ptr = &q_packet;
+    msg_send(&msg, main_pid);
+    return 0;
+}
+
+void print_persist(char * step) {
+	printf("%s Persist: seconds:%d counter:%d rssi:%d snr:%d power:%d boost:%d retries:%d tdkon:%d range:%d status:%d\n", 
+	step, persist.sleep_seconds, persist.message_counter, persist.last_rssi, persist.last_snr, persist.tx_power, 
+	persist.boost, persist.retries, persist.tdkon, persist.lastRange, persist.sensorStatus);	
+}	
+
+void listen_to(void) {
+    msg_t msg;
+    embit_packet_t *packet;
+	// wait for a command
+	lora_listen();
+	if (ztimer_msg_receive_timeout(ZTIMER_MSEC, &msg, LISTEN_TIME_MSEC) != -ETIME) {
+		// parse command
+		packet = (embit_packet_t *)msg.content.ptr;
+		persist.last_rssi = packet->rssi;
+		persist.last_snr = packet->snr;
+		persist.retries = 2;
+		printf("rx rssi %d, rx snr %d, retries=%d\n",packet->rssi, packet->snr, persist.retries);
+		char *ptr = packet->payload;
+		size_t len = packet->payload_len;
+		parse_command(ptr, len);
+	} else {
+		puts("No command received.");
+		if (persist.retries > 0) {
+			persist.retries--;
+		} else {
+			// elapsed max number of retries	
+			// set power to maximum and after 10 seconds send again.
+			persist.boost = 1;
+			persist.tx_power = 14;
+		}
+		persist.sleep_seconds = 25 + EMB_ADDRESS % 10;
+		printf("retries = %d, new seconds for retry = %d\n", persist.retries, persist.sleep_seconds);
+	}
+	lora_off();
+}	
+
 void send_to(uint8_t dst, char *buffer, size_t len)
 {
     embit_header_t header;
@@ -105,11 +211,16 @@ void send_to(uint8_t dst, char *buffer, size_t len)
     header.network = EMB_NETWORK;
     header.dst = dst;
     header.src = EMB_ADDRESS;
-    printf("Sending %d+%d bytes packet #%u to 0x%02X signature:%x network:%x source:%x :\n", EMB_HEADER_LEN, len, persist.message_counter, dst, header.signature, header.network, header.src);
+    printf("Sending %d+%d bytes packet #%u to 0x%02X signature:%x network:%x source:%d :\n", EMB_HEADER_LEN, len, persist.message_counter, dst, header.signature, header.network, header.src);
     printf("%s\n", buffer);
-  lora_init(&lora);
+    if (lora_init(&(lora)) != 0) {
+        puts("ERROR: cannot initialize radio.");
+        puts("STOP.");
+        return;
+    }
+    
     protocol_out(&header, buffer, len);
-  lora_off();
+//  lora_off();
     puts("Sent.");
 }
 
@@ -163,8 +274,6 @@ uint16_t get_amplitude(uint8_t dev_num)
 
 static void handle_data_ready(void)
 {
-//    uint32_t range;
-//    uint16_t amplitude;
     char message[MAX_PACKET_LEN];
 
     puts("DATA READY!");
@@ -172,18 +281,16 @@ static void handle_data_ready(void)
         if (chirp_devices[i].sensor_connected) {
             measures.range = get_range(i, CH_RANGE_ECHO_ONE_WAY);
             if (measures.range != CH_NO_TARGET) {
-                measures.amplitude = get_amplitude(i);
-                printf("Port %u   Range: %0.1f mm   Amplitude: %u\n", i, (float) measures.range/32.0f, measures.amplitude);
+				persist.lastRange = (int)(measures.range/32.0f);
+				measures.amplitude = get_amplitude(i);
+				printf("Port %u   Range: %0.1f mm   Amplitude: %u\n", i, (float) measures.range/32.0f, measures.amplitude);
 				snprintf(message, sizeof(message),
 				"vcc:%ld,vpan:%ld,temp:%.2f,hum:%.2f,txp:%c:%d,rxdb:%d,rxsnr:%d,sleep:%d,Range(mm):%d,Ampl:%u",
 				measures.vcc, measures.vpanel, measures.temp,
 				measures.hum, persist.boost?'B':'R', persist.tx_power, 
 				persist.last_rssi, persist.last_snr, persist.sleep_seconds, (int)(measures.range/32.0f), measures.amplitude);
-
-//				snprintf(message, sizeof(message), 
-//				"Temp: %.1f °C, RH: %.1f %%, Vsupercap (mV): %ld, Vpanel(mV): %ld, Port %u, Range (mm): %0.1f, Amplitude: %u\n", 
-//				measures.temp, measures.hum, measures.vcc, measures.vpanel, i, (float) measures.range/32.0f, measures.amplitude);
-                send_to(EMB_BROADCAST, message, strlen(message)+1);
+				send_to(EMB_BROADCAST, message, strlen(message)+1);
+				listen_to();
             } else {
 				printf("\nNO_TARGET !!! %f\n\n", (float)measures.range);
 			}
@@ -375,8 +482,6 @@ void freeze_data(void)
     offset += sizeof(chirp_devices);
     fram_write(offset, (void *)&chirp_group, sizeof(chirp_group));
     offset += sizeof(chirp_group);
-    fram_write(offset, (void *)&emb_counter, sizeof(emb_counter));
-    offset += sizeof(emb_counter);
     puts("Chirp sensor data freezed.");
 }
 
@@ -389,8 +494,6 @@ void thaw_data(void)
     offset += sizeof(chirp_devices);
     fram_read(offset, (void *)&chirp_group, sizeof(chirp_group));
     offset += sizeof(chirp_group);
-    fram_read(offset, (void *)&emb_counter, sizeof(emb_counter));
-    offset += sizeof(emb_counter);
     puts("Chirp sensor data thawed.");
 }
 
@@ -402,7 +505,7 @@ void board_startup(void)
     lora.coderate         = DEFAULT_LORA_CODERATE;
     lora.channel          = DEFAULT_LORA_CHANNEL;
     lora.power            = DEFAULT_LORA_POWER;
-    lora_init(&lora);
+    lora.data_cb          = *protocol_in;
     lora_off();
 
     gpio_init(FRAM_POWER, GPIO_OUT);
@@ -413,7 +516,6 @@ void board_startup(void)
 void board_sleep(void)
 {
     puts("Entering backup mode.");
-	printf("Persist.tdkon = %d\n", persist.tdkon);
 
     // turn radio off
 //    lora_off();
@@ -428,8 +530,10 @@ void board_sleep(void)
         gpio_init(i2c_config[i].scl_pin, GPIO_IN_PU);
         gpio_init(i2c_config[i].sda_pin, GPIO_IN_PU);
     }
+//    persist.lastRange = measures.range; 
+    print_persist("GO TO SLEEP");
     rtc_mem_write(0, (char *)&persist, sizeof(persist));
-
+printf("persist.sleep_seconds = %d but 10\n", persist.sleep_seconds);
     saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, 10);
 }
 
@@ -448,10 +552,26 @@ void board_loop(void)
     }
 }
 
+void persist_init(void) {
+	// init persist values
+	persist.message_counter = 0;
+	persist.last_rssi = -1;
+	persist.last_snr = -1;
+	persist.tx_power = 14;  
+	persist.boost = 1;
+	persist.retries = 2;
+	persist.tdkon = 1;
+	persist.lastRange = 9999;
+	persist.sensorStatus = -1;	
+    persist.sleep_seconds = SLEEP_TIME_SEC;
+}	
+
 int main(void)
 {
 	puts("\n");
 	printf("SIENA-FIRMWARE Compiled: %s,%s\n", __DATE__, __TIME__);
+    main_pid = thread_getpid();
+    protocol_init(*packet_received);
 
     board_startup();
 	printf("Sensor set: Address: %d Bandwidth: %d, Frequency: %ld\n            Spreading Factor: %d, Coderate: %d, Listen Time ms: %d\n", 
@@ -460,14 +580,18 @@ int main(void)
     switch(saml21_wakeup_cause()) {
         case BACKUP_EXTWAKE:
 	        rtc_mem_read(0, (char *)&persist, sizeof(persist));
-			printf(" Persist.tdkon = %d\n", persist.tdkon);
+	        lora.boost=persist.boost;
+	        lora.power=persist.tx_power;
+			print_persist("EXTWAKE");
 			internal_sensors_read();
             thaw_data();
             handle_data_ready();
             break;
         case BACKUP_RTC:
 	        rtc_mem_read(0, (char *)&persist, sizeof(persist));
-			printf(" Persist.tdkon = %d\n", persist.tdkon);
+	        lora.boost=persist.boost;
+	        lora.power=persist.tx_power;
+			print_persist("BACKUP_RTC");
 			printf(" Periodic Wakeup !\n");
 			internal_sensors_read();
 			if (persist.tdkon == 0) {  // if tdk is off
@@ -487,32 +611,31 @@ int main(void)
 					persist.tdkon = 0;
 				}	
 			}		
+			persist.lastRange=9999;
 			snprintf(message, sizeof(message),
 			"vcc:%ld,vpan:%ld,temp:%.2f,hum:%.2f,txp:%c:%d,rxdb:%d,rxsnr:%d,sleep:%d,Range(mm):%d,Ampl:%u",
 			measures.vcc, measures.vpanel, measures.temp,
 			measures.hum, persist.boost?'B':'R', persist.tx_power, 
-			persist.last_rssi, persist.last_snr, persist.sleep_seconds, (int)(measures.range/32.0f), measures.amplitude);
-//			snprintf(message, sizeof(message), "Temp: %.1f °C, RH: %.1f %%, Vsupercap (mV): %ld, Vpanel(mV): %ld, Port %u, Range (mm): %0.1f, Amplitude: %u\n", measures.temp, measures.hum, measures.vcc, measures.vpanel, 9999, 9999.9, 9999);
+			persist.last_rssi, persist.last_snr, persist.sleep_seconds, persist.lastRange, measures.amplitude);
 			send_to(EMB_BROADCAST, message, strlen(message)+1);
+			listen_to();
             break;
         default:
-	snprintf(message, sizeof(message), "Start Demo Siena\n");
-	send_to(EMB_BROADCAST, message, strlen(message)+1);
-			puts("\nDefault\n\n");
+			snprintf(message, sizeof(message), "Start Demo Siena\n");
+			send_to(EMB_BROADCAST, message, strlen(message)+1);
+			puts("\nDefault ======================================================\n\n");
+			persist_init();
 			gpio_clear(FRAM_POWER);
 			gpio_clear(GPIO_PIN(PA, 31));
             internal_sensors_read();
-            persist.tdkon = 0;
 //			if (measures.vpanel > 1000) { 
 			if (1) { 
 				sensors_init();
 				gpio_set(FRAM_POWER);
 				freeze_data();
-				persist.tdkon = 1;
 			}	
             break;
     }
-
 #ifdef BACKUP_MODE
     board_sleep();
 #else
