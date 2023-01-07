@@ -32,7 +32,7 @@
 #define CHIRP_SENSOR_TARGET_INT_HIST	1		// num of previous results kept in history
 #define CHIRP_SENSOR_TARGET_INT_THRESH  1		// num of target detections req'd to interrupt
 #define CHIRP_SENSOR_TARGET_INT_RESET   0		// if non-zero, target filter resets after interrupt
-#define	CHIRP_SENSOR_MAX_RANGE_MM		2000	/* maximum range, in mm */
+#define	CHIRP_SENSOR_MAX_RANGE_MM		1000	/* maximum range, in mm */
 #define	CHIRP_SENSOR_THRESHOLD_0		0	/* close range threshold (0 = use default) */
 #define	CHIRP_SENSOR_THRESHOLD_1		0	/* standard threshold (0 = use default) */
 #define	CHIRP_SENSOR_RX_HOLDOFF			0	/* # of samples to ignore at start of meas */
@@ -533,8 +533,8 @@ void board_sleep(void)
 //    persist.lastRange = measures.range; 
     print_persist("GO TO SLEEP");
     rtc_mem_write(0, (char *)&persist, sizeof(persist));
-printf("persist.sleep_seconds = %d but 10\n", persist.sleep_seconds);
-    saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, 10);
+printf("persist.sleep_seconds = %d but 60\n", persist.sleep_seconds);
+    saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, 60);
 }
 
 void board_loop(void)
