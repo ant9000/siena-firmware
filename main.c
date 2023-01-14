@@ -26,7 +26,6 @@
 
 
 #define EXTWAKE { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }  // put EXTWAKE_LOW fo TDK present; EXTWAKE_HIGH for no TDK present
-#define FRAM_POWER  GPIO_PIN(PA, 27)
 
 #define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
 #define CHIRP_SENSOR_TARGET_INT_HIST	1		// num of previous results kept in history
@@ -105,7 +104,7 @@ static struct {
 void waitCurrentMeasure(uint32_t milliseconds, char* step) {
 	printf("waitCurrentMeasure %s\n", step);
 	ztimer_sleep(ZTIMER_MSEC, milliseconds);
-}	
+}
 
 void parse_command(char *ptr, size_t len) {
 	char *token;
@@ -114,7 +113,7 @@ void parse_command(char *ptr, size_t len) {
     if((len > 2) && (strlen(ptr) == (size_t)(len-1)) && (ptr[0] == '@') && (ptr[len-2] == '$')) {
 		token = strtok(ptr+1, ",");
         uint32_t seconds = strtoul(token, NULL, 0);
-//seconds = 5;        
+//seconds = 5;
         printf("Instructed to sleep for %lu seconds\n", seconds);
 
         persist.sleep_seconds = (seconds > 0 ) && (seconds < 36000) ? (uint16_t)seconds : SLEEP_TIME_SEC;
@@ -122,9 +121,9 @@ void parse_command(char *ptr, size_t len) {
             printf("Corrected sleep value: %u seconds\n", persist.sleep_seconds);
         }
         token = strtok(NULL, ",");
-        
+
 //token[0] = 'B';
-        
+
         if (token[0]=='B') {
 			printf("Boost out selected!\n");
 			persist.boost = 1;
@@ -167,10 +166,10 @@ ssize_t packet_received(const embit_packet_t *packet)
 }
 
 void print_persist(char * step) {
-	printf("%s Persist: seconds:%d counter:%d rssi:%d snr:%d power:%d boost:%d retries:%d tdkon:%d range:%d status:%d\n", 
-	step, persist.sleep_seconds, persist.message_counter, persist.last_rssi, persist.last_snr, persist.tx_power, 
-	persist.boost, persist.retries, persist.tdkon, persist.lastRange, persist.sensorStatus);	
-}	
+	printf("%s Persist: seconds:%d counter:%d rssi:%d snr:%d power:%d boost:%d retries:%d tdkon:%d range:%d status:%d\n",
+	step, persist.sleep_seconds, persist.message_counter, persist.last_rssi, persist.last_snr, persist.tx_power,
+	persist.boost, persist.retries, persist.tdkon, persist.lastRange, persist.sensorStatus);
+}
 
 void listen_to(void) {
     msg_t msg;
@@ -192,7 +191,7 @@ void listen_to(void) {
 		if (persist.retries > 0) {
 			persist.retries--;
 		} else {
-			// elapsed max number of retries	
+			// elapsed max number of retries
 			// set power to maximum and after 10 seconds send again.
 			persist.boost = 1;
 			persist.tx_power = 14;
@@ -201,7 +200,7 @@ void listen_to(void) {
 		printf("retries = %d, new seconds for retry = %d\n", persist.retries, persist.sleep_seconds);
 	}
 	lora_off();
-}	
+}
 
 void send_to(uint8_t dst, char *buffer, size_t len)
 {
@@ -218,7 +217,7 @@ void send_to(uint8_t dst, char *buffer, size_t len)
         puts("STOP.");
         return;
     }
-    
+
     protocol_out(&header, buffer, len);
 //  lora_off();
     puts("Sent.");
@@ -287,7 +286,7 @@ static void handle_data_ready(void)
 				snprintf(message, sizeof(message),
 				"vcc:%ld,vpan:%ld,temp:%.2f,hum:%.2f,txp:%c:%d,rxdb:%d,rxsnr:%d,sleep:%d,Range(mm):%d,Ampl:%u",
 				measures.vcc, measures.vpanel, measures.temp,
-				measures.hum, persist.boost?'B':'R', persist.tx_power, 
+				measures.hum, persist.boost?'B':'R', persist.tx_power,
 				persist.last_rssi, persist.last_snr, persist.sleep_seconds, (int)(measures.range/32.0f), measures.amplitude);
 				send_to(EMB_BROADCAST, message, strlen(message)+1);
 				listen_to();
@@ -489,7 +488,6 @@ void thaw_data(void)
 {
     size_t offset = 0;
     // WARNING: any pointer inside the structures will be dangling after a reset!!!
-    gpio_set(FRAM_POWER);
     fram_read(offset, (void *)&chirp_devices, sizeof(chirp_devices));
     offset += sizeof(chirp_devices);
     fram_read(offset, (void *)&chirp_group, sizeof(chirp_group));
@@ -508,8 +506,6 @@ void board_startup(void)
     lora.data_cb          = *protocol_in;
     lora_off();
 
-    gpio_init(FRAM_POWER, GPIO_OUT);
-    gpio_set(FRAM_POWER);
     fram_init();
 }
 
@@ -521,7 +517,7 @@ void board_sleep(void)
 //    lora_off();
 
     // turn off FRAM
-    gpio_clear(FRAM_POWER);
+    fram_off();
 
     // turn I2C devices off (leave internal bus I2C_DEV(0) alone)
     for(size_t i = 1; i < I2C_NUMOF; i++) {
@@ -530,7 +526,7 @@ void board_sleep(void)
         gpio_init(i2c_config[i].scl_pin, GPIO_IN_PU);
         gpio_init(i2c_config[i].sda_pin, GPIO_IN_PU);
     }
-//    persist.lastRange = measures.range; 
+//    persist.lastRange = measures.range;
     print_persist("GO TO SLEEP");
     rtc_mem_write(0, (char *)&persist, sizeof(persist));
 printf("persist.sleep_seconds = %d but 60\n", persist.sleep_seconds);
@@ -557,14 +553,14 @@ void persist_init(void) {
 	persist.message_counter = 0;
 	persist.last_rssi = -1;
 	persist.last_snr = -1;
-	persist.tx_power = 14;  
+	persist.tx_power = 14;
 	persist.boost = 1;
 	persist.retries = 2;
 	persist.tdkon = 1;
 	persist.lastRange = 9999;
-	persist.sensorStatus = -1;	
+	persist.sensorStatus = -1;
     persist.sleep_seconds = SLEEP_TIME_SEC;
-}	
+}
 
 int main(void)
 {
@@ -574,7 +570,7 @@ int main(void)
     protocol_init(*packet_received);
 
     board_startup();
-	printf("Sensor set: Address: %d Bandwidth: %d, Frequency: %ld\n            Spreading Factor: %d, Coderate: %d, Listen Time ms: %d\n", 
+	printf("Sensor set: Address: %d Bandwidth: %d, Frequency: %ld\n            Spreading Factor: %d, Coderate: %d, Listen Time ms: %d\n",
 			EMB_ADDRESS, lora.bandwidth, lora.channel, lora.spreading_factor, lora.coderate, LISTEN_TIME_MSEC);
 	printf("Wakeup cause = %d\n\n",saml21_wakeup_cause());
     switch(saml21_wakeup_cause()) {
@@ -595,27 +591,26 @@ int main(void)
 			printf(" Periodic Wakeup !\n");
 			internal_sensors_read();
 			if (persist.tdkon == 0) {  // if tdk is off
-				if (measures.vpanel > 1000) { 
-//				if (0) { 
+				if (measures.vpanel > 1000) {
+//				if (0) {
 					sensors_init();
-					gpio_set(FRAM_POWER);
 					freeze_data();
 					persist.tdkon = 1;
-				}	
+				}
 			} else {  // tdk is on
-				if (measures.vpanel < 1000) { 
-//				if (0) { 
+				if (measures.vpanel < 1000) {
+//				if (0) {
 					// switch off TDK to save power
 //					gpio_clear(GPIO_PIN(PA, 31));
 //			waitCurrentMeasure(10000, "waiting switch off TDK 10s");
 					persist.tdkon = 0;
-				}	
-			}		
+				}
+			}
 			persist.lastRange=9999;
 			snprintf(message, sizeof(message),
 			"vcc:%ld,vpan:%ld,temp:%.2f,hum:%.2f,txp:%c:%d,rxdb:%d,rxsnr:%d,sleep:%d,Range(mm):%d,Ampl:%u",
 			measures.vcc, measures.vpanel, measures.temp,
-			measures.hum, persist.boost?'B':'R', persist.tx_power, 
+			measures.hum, persist.boost?'B':'R', persist.tx_power,
 			persist.last_rssi, persist.last_snr, persist.sleep_seconds, persist.lastRange, measures.amplitude);
 			send_to(EMB_BROADCAST, message, strlen(message)+1);
 			listen_to();
@@ -625,15 +620,14 @@ int main(void)
 			send_to(EMB_BROADCAST, message, strlen(message)+1);
 			puts("\nDefault ======================================================\n\n");
 			persist_init();
-			gpio_clear(FRAM_POWER);
+            fram_off();
 			gpio_clear(GPIO_PIN(PA, 31));
             internal_sensors_read();
-//			if (measures.vpanel > 1000) { 
-			if (1) { 
+//			if (measures.vpanel > 1000) {
+			if (1) {
 				sensors_init();
-				gpio_set(FRAM_POWER);
 				freeze_data();
-			}	
+			}
             break;
     }
 #ifdef BACKUP_MODE

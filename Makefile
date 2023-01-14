@@ -16,6 +16,7 @@ AES ?= 0
 USEMODULE += od
 USEMODULE += od_string
 USEMODULE += hdc3020
+USEMODULE += fram
 USEMODULE += saml21_cpu_debug
 USEMODULE += saml21_backup_mode
 USEMODULE += printf_float
