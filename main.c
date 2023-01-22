@@ -16,6 +16,7 @@
 #include "ztimer.h"
 #include "periph/rtc_mem.h"
 
+#include "periph/rtt.h"
 
 #if defined(BOARD_LORA3A_H10)
 #define ADC_VCC    (0)
@@ -25,13 +26,15 @@
 
 
 
-#define EXTWAKE { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }  // put EXTWAKE_LOW fo TDK present; EXTWAKE_HIGH for no TDK present
+#define EXTWAKE_LOW { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }  // put EXTWAKE_LOW for TDK present; EXTWAKE_HIGH for no TDK present
+#define EXTWAKE_HIGH { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_HIGH, .flags=EXTWAKE_IN }  // put EXTWAKE_LOW for TDK present; EXTWAKE_HIGH for no TDK present
+#define FRAM_POWER  GPIO_PIN(PA, 27)
 
 #define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
 #define CHIRP_SENSOR_TARGET_INT_HIST	1		// num of previous results kept in history
 #define CHIRP_SENSOR_TARGET_INT_THRESH  1		// num of target detections req'd to interrupt
 #define CHIRP_SENSOR_TARGET_INT_RESET   0		// if non-zero, target filter resets after interrupt
-#define	CHIRP_SENSOR_MAX_RANGE_MM		1000	/* maximum range, in mm */
+#define	CHIRP_SENSOR_MAX_RANGE_MM		2500	/* maximum range, in mm */
 #define	CHIRP_SENSOR_THRESHOLD_0		0	/* close range threshold (0 = use default) */
 #define	CHIRP_SENSOR_THRESHOLD_1		0	/* standard threshold (0 = use default) */
 #define	CHIRP_SENSOR_RX_HOLDOFF			0	/* # of samples to ignore at start of meas */
@@ -63,7 +66,7 @@ static kernel_pid_t main_pid;
 /* Bit flags used in main loop to check for completion of I/O or timer operations.  */
 #define DATA_READY_FLAG     (1 << 0)        // data ready from sensor
 
-static saml21_extwake_t extwake = EXTWAKE;
+static saml21_extwake_t extwake = EXTWAKE_LOW;
 
 ch_dev_t     chirp_devices[CHIRP_MAX_NUM_SENSORS];
 ch_group_t   chirp_group;
@@ -488,6 +491,7 @@ void thaw_data(void)
 {
     size_t offset = 0;
     // WARNING: any pointer inside the structures will be dangling after a reset!!!
+    fram_on();
     fram_read(offset, (void *)&chirp_devices, sizeof(chirp_devices));
     offset += sizeof(chirp_devices);
     fram_read(offset, (void *)&chirp_group, sizeof(chirp_group));
@@ -504,12 +508,13 @@ void board_startup(void)
     lora.channel          = DEFAULT_LORA_CHANNEL;
     lora.power            = DEFAULT_LORA_POWER;
     lora.data_cb          = *protocol_in;
+	lora_init(&(lora));
     lora_off();
 
     fram_init();
 }
 
-void board_sleep(void)
+void board_sleep(uint8_t resetCounter)
 {
     puts("Entering backup mode.");
 
@@ -529,8 +534,8 @@ void board_sleep(void)
 //    persist.lastRange = measures.range;
     print_persist("GO TO SLEEP");
     rtc_mem_write(0, (char *)&persist, sizeof(persist));
-printf("persist.sleep_seconds = %d but 60\n", persist.sleep_seconds);
-    saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, 60);
+printf("persist.sleep_seconds = %d\n", persist.sleep_seconds);
+    saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, persist.sleep_seconds, resetCounter);
 }
 
 void board_loop(void)
@@ -566,6 +571,11 @@ int main(void)
 {
 	puts("\n");
 	printf("SIENA-FIRMWARE Compiled: %s,%s\n", __DATE__, __TIME__);
+
+    uint32_t now = rtt_get_counter();
+    uint32_t now2;
+    printf("RTT now: %" PRIu32 "\n", now);
+	
     main_pid = thread_getpid();
     protocol_init(*packet_received);
 
@@ -618,6 +628,7 @@ int main(void)
         default:
 			snprintf(message, sizeof(message), "Start Demo Siena\n");
 			send_to(EMB_BROADCAST, message, strlen(message)+1);
+			lora_off();
 			puts("\nDefault ======================================================\n\n");
 			persist_init();
             fram_off();
@@ -631,7 +642,14 @@ int main(void)
             break;
     }
 #ifdef BACKUP_MODE
-    board_sleep();
+//saml21_cpu_debug();
+    now = rtt_get_counter();
+    ztimer_sleep(ZTIMER_MSEC, 100);
+    now2 = rtt_get_counter();
+    printf("RTT now: %" PRIu32 "\n", now);
+    printf("RTT now after ztimer 100msec: %" PRIu32 ", diff:%ld\n", now2, now2-now);
+ 
+    board_sleep(1);
 #else
     board_loop();
 #endif

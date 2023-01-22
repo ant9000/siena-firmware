@@ -11,7 +11,7 @@
 #define DEFAULT_LORA_BANDWIDTH        LORA_BW_500_KHZ
 #define DEFAULT_LORA_SPREADING_FACTOR LORA_SF7
 #define DEFAULT_LORA_CODERATE         LORA_CR_4_5
-#define DEFAULT_LORA_CHANNEL          (867000000UL)
+#define DEFAULT_LORA_CHANNEL          (866000000UL)
 #define DEFAULT_LORA_POWER            SX127X_RADIO_TX_POWER
 
 typedef void (lora_data_cb_t)(const char *buffer, size_t len, int16_t *rssi, int8_t *snr);
