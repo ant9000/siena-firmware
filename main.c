@@ -31,16 +31,16 @@
 #define FRAM_POWER  GPIO_PIN(PA, 27)
 
 #define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
-#define CHIRP_SENSOR_TARGET_INT_HIST	1		// num of previous results kept in history
-#define CHIRP_SENSOR_TARGET_INT_THRESH  1		// num of target detections req'd to interrupt
+#define CHIRP_SENSOR_TARGET_INT_HIST	5		// num of previous results kept in history
+#define CHIRP_SENSOR_TARGET_INT_THRESH  2		// num of target detections req'd to interrupt
 #define CHIRP_SENSOR_TARGET_INT_RESET   0		// if non-zero, target filter resets after interrupt
 #define	CHIRP_SENSOR_MAX_RANGE_MM		2500	/* maximum range, in mm */
-#define	CHIRP_SENSOR_THRESHOLD_0		0	/* close range threshold (0 = use default) */
-#define	CHIRP_SENSOR_THRESHOLD_1		0	/* standard threshold (0 = use default) */
+#define	CHIRP_SENSOR_THRESHOLD_0		200	/* close range threshold (0 = use default) */
+#define	CHIRP_SENSOR_THRESHOLD_1		50	/* standard threshold (0 = use default) */
 #define	CHIRP_SENSOR_RX_HOLDOFF			0	/* # of samples to ignore at start of meas */
 #define	CHIRP_SENSOR_RX_LOW_GAIN		0	/* # of samples (0 = use default) */
-#define	CHIRP_SENSOR_TX_LENGTH			0	/* Tx pulse length, in cycles (0 = use default) */
-#define	MEASUREMENT_INTERVAL_MS		    1000	// 1000ms interval = 1Hz sampling
+#define	CHIRP_SENSOR_TX_LENGTH			30	/* Tx pulse length, in cycles (0 = use default) */
+#define	MEASUREMENT_INTERVAL_MS		    200	// 1000ms interval = 1Hz sampling
 
 #ifndef EMB_ADDRESS
 	#define EMB_ADDRESS 1
@@ -54,8 +54,8 @@
 	#define SLEEP_TIME_SEC 5
 #endif
 #ifndef LISTEN_TIME_MSEC
-	// use 450 if BW 125kHz; 150 if BW 500kHz
-	#define LISTEN_TIME_MSEC 150
+	// use 450 if BW 125kHz; 350 if BW 500kHz  +200ms da migliorare
+	#define LISTEN_TIME_MSEC 350
 #endif
 
 static embit_packet_t q_packet;
@@ -285,7 +285,7 @@ static void handle_data_ready(void)
             if (measures.range != CH_NO_TARGET) {
 				persist.lastRange = (int)(measures.range/32.0f);
 				measures.amplitude = get_amplitude(i);
-				printf("Port %u   Range: %0.1f mm   Amplitude: %u\n", i, (float) measures.range/32.0f, measures.amplitude);
+				printf("\n\n             Port %u   Range: %0.1f mm   Amplitude: %u\n\n\n", i, (float) measures.range/32.0f, measures.amplitude);
 				snprintf(message, sizeof(message),
 				"vcc:%ld,vpan:%ld,temp:%.2f,hum:%.2f,txp:%c:%d,rxdb:%d,rxsnr:%d,sleep:%d,Range(mm):%d,Ampl:%u",
 				measures.vcc, measures.vpanel, measures.temp,
@@ -569,12 +569,12 @@ void persist_init(void) {
 
 int main(void)
 {
-	puts("\n");
+//	puts("\n");
 	printf("SIENA-FIRMWARE Compiled: %s,%s\n", __DATE__, __TIME__);
 
-    uint32_t now = rtt_get_counter();
-    uint32_t now2;
-    printf("RTT now: %" PRIu32 "\n", now);
+//    uint32_t now = rtt_get_counter();
+//    uint32_t now2;
+//    printf("RTT now: %" PRIu32 "\n", now);
 	
     main_pid = thread_getpid();
     protocol_init(*packet_received);
@@ -643,11 +643,11 @@ int main(void)
     }
 #ifdef BACKUP_MODE
 //saml21_cpu_debug();
-    now = rtt_get_counter();
-    ztimer_sleep(ZTIMER_MSEC, 100);
-    now2 = rtt_get_counter();
-    printf("RTT now: %" PRIu32 "\n", now);
-    printf("RTT now after ztimer 100msec: %" PRIu32 ", diff:%ld\n", now2, now2-now);
+//    now = rtt_get_counter();
+//    ztimer_sleep(ZTIMER_MSEC, 100);
+//    now2 = rtt_get_counter();
+//    printf("RTT now: %" PRIu32 "\n", now);
+//    printf("RTT now after ztimer 100msec: %" PRIu32 ", diff:%ld\n", now2, now2-now);
  
     board_sleep(1);
 #else
