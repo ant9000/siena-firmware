@@ -30,7 +30,7 @@ USEMODULE += ztimer_usec
 USEMODULE += periph_rtc_mem
 USEPKG += soniclib
 
-#CFLAGS += -DENABLE_ACME1
+CFLAGS += -DENABLE_ACME1=MODE_I2C
 CFLAGS += -DENABLE_ACME2=MODE_I2C
 
 ifeq ($(BACKUP_MODE), 1)
