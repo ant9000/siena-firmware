@@ -25,9 +25,10 @@
 #endif
 
 
-
-#define EXTWAKE_LOW { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }  // put EXTWAKE_LOW for TDK present; EXTWAKE_HIGH for no TDK present
-#define EXTWAKE_HIGH { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_HIGH, .flags=EXTWAKE_IN }  // put EXTWAKE_LOW for TDK present; EXTWAKE_HIGH for no TDK present
+#define EXTWAKE_PINS { \
+     { .pin=EXTWAKE_PIN1, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
+     { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
+  }
 #define FRAM_POWER  GPIO_PIN(PA, 27)
 
 #define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
@@ -66,7 +67,7 @@ static kernel_pid_t main_pid;
 /* Bit flags used in main loop to check for completion of I/O or timer operations.  */
 #define DATA_READY_FLAG     (1 << 0)        // data ready from sensor
 
-static saml21_extwake_t extwake = EXTWAKE_LOW;
+static saml21_extwake_t extwake[] = EXTWAKE_PINS;
 
 ch_dev_t     chirp_devices[CHIRP_MAX_NUM_SENSORS];
 ch_group_t   chirp_group;
@@ -535,7 +536,7 @@ void board_sleep(uint8_t resetCounter)
     print_persist("GO TO SLEEP");
     rtc_mem_write(0, (char *)&persist, sizeof(persist));
 printf("persist.sleep_seconds = %d\n", persist.sleep_seconds);
-    saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, persist.sleep_seconds, resetCounter);
+    saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, ARRAY_SIZE(extwake), persist.sleep_seconds, resetCounter);
 }
 
 void board_loop(void)
@@ -588,7 +589,11 @@ int main(void)
 	        rtc_mem_read(0, (char *)&persist, sizeof(persist));
 	        lora.boost=persist.boost;
 	        lora.power=persist.tx_power;
+            uint8_t pins = saml21_wakeup_pins();
 			print_persist("EXTWAKE");
+            printf("Wakeup pins: ");
+            for(int i=0; i<8; i++) { if (pins & (1 << i)) { printf(" PA%02d", i); } }
+            printf("\n");
 			internal_sensors_read();
             thaw_data();
             handle_data_ready();
