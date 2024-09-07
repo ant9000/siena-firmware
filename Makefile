@@ -11,7 +11,8 @@ PORT ?= /dev/ttyUSB0
 BACKUP_MODE ?= 1
 ADDRESS ?= 2
 AES ?= 0
-
+F867000000 ?= 0
+F865000000 ?= 0
 
 USEMODULE += od
 USEMODULE += od_string
@@ -33,6 +34,8 @@ USEPKG += soniclib
 CFLAGS += -DENABLE_ACME1=MODE_I2C
 CFLAGS += -DENABLE_ACME2=MODE_I2C
 
+CFLAGS += -DENABLEVCC1V8=1
+
 ifeq ($(BACKUP_MODE), 1)
   CFLAGS += -DBACKUP_MODE
 endif
@@ -41,5 +44,14 @@ ifneq (,$(ADDRESS))
   CFLAGS += -DEMB_ADDRESS=$(ADDRESS)
 endif
 
+CFLAGS += -DTHREAD_STACKSIZE_DEFAULT=2048
+
+ifeq ($(F867000000), 1)
+  CFLAGS += -DF867000000=1
+endif
+
+ifeq ($(F865000000), 1)
+  CFLAGS += -DF865000000=1
+endif
 
 include $(RIOTBASE)/Makefile.include

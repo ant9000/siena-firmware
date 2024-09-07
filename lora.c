@@ -102,7 +102,8 @@ int lora_write(const iolist_t *packet)
 	if (lora->boost) {
 		gpio_clear(TX_OUTPUT_SEL_PIN);   // V1 = 0
 	} else {
-		gpio_set(TX_OUTPUT_SEL_PIN);  // V1 = 1
+//		gpio_set(TX_OUTPUT_SEL_PIN);  // V1 = 1
+		gpio_clear(TX_OUTPUT_SEL_PIN);  // V1 = 1  // ROB cambiato in clear altrimenti perde 40dB.Forse dentro il semtech non commuta in rfo
     }
 #endif
     if (netdev->driver->send(netdev, packet) == -ENOTSUP) {

@@ -21,28 +21,56 @@
 #if defined(BOARD_LORA3A_H10)
 #define ADC_VCC    (0)
 #define ADC_VPANEL (1)
+
+#ifdef ENABLEVCC1V8
+#define ADC_VSUPERCAP (2)
+#endif
+
 #define VPANEL_ENABLE  GPIO_PIN(PA, 27)
 #endif
 
+#ifdef ENABLEVCC1V8
+
+#define EXTWAKE_PINS \
+  { .pin=EXTWAKE_PIN0, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }
+static saml21_extwake_t extwake = EXTWAKE_PINS;
+
+#else
 
 #define EXTWAKE_PINS { \
      { .pin=EXTWAKE_PIN1, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
      { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
   }
+static saml21_extwake_t extwake[]= EXTWAKE_PINS;
+
+#endif  
 #define FRAM_POWER  GPIO_PIN(PA, 27)
 
+#if 0
 #define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
 #define CHIRP_SENSOR_TARGET_INT_HIST	5		// num of previous results kept in history
 #define CHIRP_SENSOR_TARGET_INT_THRESH  2		// num of target detections req'd to interrupt
 #define CHIRP_SENSOR_TARGET_INT_RESET   0		// if non-zero, target filter resets after interrupt
-#define	CHIRP_SENSOR_MAX_RANGE_MM		2500	/* maximum range, in mm */
+#define	CHIRP_SENSOR_MAX_RANGE_MM		1000	/* maximum range, in mm */
 #define	CHIRP_SENSOR_THRESHOLD_0		200	/* close range threshold (0 = use default) */
 #define	CHIRP_SENSOR_THRESHOLD_1		50	/* standard threshold (0 = use default) */
 #define	CHIRP_SENSOR_RX_HOLDOFF			0	/* # of samples to ignore at start of meas */
 #define	CHIRP_SENSOR_RX_LOW_GAIN		0	/* # of samples (0 = use default) */
 #define	CHIRP_SENSOR_TX_LENGTH			30	/* Tx pulse length, in cycles (0 = use default) */
-#define	MEASUREMENT_INTERVAL_MS		    200	// 1000ms interval = 1Hz sampling
-
+#define	MEASUREMENT_INTERVAL_MS		    1000	// 1000ms interval = 1Hz sampling
+#else
+#define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
+#define CHIRP_SENSOR_TARGET_INT_HIST	0		// num of previous results kept in history
+#define CHIRP_SENSOR_TARGET_INT_THRESH  1		// num of target detections req'd to interrupt
+#define CHIRP_SENSOR_TARGET_INT_RESET   0		// if non-zero, target filter resets after interrupt
+#define	CHIRP_SENSOR_MAX_RANGE_MM		2000	/* maximum range, in mm */
+#define	CHIRP_SENSOR_THRESHOLD_0		0	/* close range threshold (0 = use default) */
+#define	CHIRP_SENSOR_THRESHOLD_1		0	/* standard threshold (0 = use default) */
+#define	CHIRP_SENSOR_RX_HOLDOFF			10	/* # of samples to ignore at start of meas */
+#define	CHIRP_SENSOR_RX_LOW_GAIN		0	/* # of samples (0 = use default) */
+#define	CHIRP_SENSOR_TX_LENGTH			0	/* Tx pulse length, in cycles (0 = use default) */
+#define	MEASUREMENT_INTERVAL_MS		    1000	// 1000ms interval = 1Hz sampling
+#endif
 #ifndef EMB_ADDRESS
 	#define EMB_ADDRESS 1
 #endif
@@ -67,7 +95,6 @@ static kernel_pid_t main_pid;
 /* Bit flags used in main loop to check for completion of I/O or timer operations.  */
 #define DATA_READY_FLAG     (1 << 0)        // data ready from sensor
 
-static saml21_extwake_t extwake[] = EXTWAKE_PINS;
 
 ch_dev_t     chirp_devices[CHIRP_MAX_NUM_SENSORS];
 ch_group_t   chirp_group;
@@ -105,6 +132,9 @@ static struct {
     uint16_t amplitude;
 } measures;
 
+void internal_sensors_read(void);
+
+
 void waitCurrentMeasure(uint32_t milliseconds, char* step) {
 	printf("waitCurrentMeasure %s\n", step);
 	ztimer_sleep(ZTIMER_MSEC, milliseconds);
@@ -138,7 +168,7 @@ void parse_command(char *ptr, size_t len) {
         token = strtok(NULL, "$");
         txpow = atoi(token);
 //txpow = 14;
-        if (txpow!=0) {
+        if (txpow>=0) {
 			persist.tx_power = txpow;
 			printf("Instructed to tx at level %d\n",txpow);
 		}
@@ -200,7 +230,7 @@ void listen_to(void) {
 			persist.boost = 1;
 			persist.tx_power = 14;
 		}
-		persist.sleep_seconds = 25 + EMB_ADDRESS % 10;
+		persist.sleep_seconds = 25 + (EMB_ADDRESS<100 ? EMB_ADDRESS : EMB_ADDRESS % 10);
 		printf("retries = %d, new seconds for retry = %d\n", persist.retries, persist.sleep_seconds);
 	}
 	lora_off();
@@ -284,6 +314,9 @@ static void handle_data_ready(void)
         if (chirp_devices[i].sensor_connected) {
             measures.range = get_range(i, CH_RANGE_ECHO_ONE_WAY);
             if (measures.range != CH_NO_TARGET) {
+#ifndef BACKUP_MODE				
+				internal_sensors_read();  // otherwise it will not update the readings
+#endif
 				persist.lastRange = (int)(measures.range/32.0f);
 				measures.amplitude = get_amplitude(i);
 				printf("\n\n             Port %u   Range: %0.1f mm   Amplitude: %u\n\n\n", i, (float) measures.range/32.0f, measures.amplitude);
@@ -323,7 +356,8 @@ void internal_sensors_read(void)
 //    int32_t vcc;
 //    int32_t vpanel;
 //    char message[MAX_PACKET_LEN];
-
+	int32_t val;
+	
     puts("Internal Sensors read.");
     if (hdc3020_init(&hdc3020, hdc3020_params) == HDC3020_OK) {
         if (hdc3020_read(&hdc3020, &measures.temp, &measures.hum) == HDC3020_OK) {
@@ -331,10 +365,25 @@ void internal_sensors_read(void)
         }
     }
     // read vcc
-    measures.vcc = adc_sample(ADC_VCC, ADC_RES_12BIT)*4000/4095;  // corrected value (1V = 4095 counts)
-    // read vpanel
+#ifdef ENABLEVCC1V8
     ztimer_sleep(ZTIMER_MSEC, 30);
-    measures.vpanel = adc_sample(ADC_VPANEL, ADC_RES_12BIT)*3933/4095; // adapted to real resistor partition value (75k over 220k)
+    val = adc_sample(ADC_VSUPERCAP, ADC_RES_16BIT);
+    // ADC line 1 reads VSupercap against VREFINT of 1V, with a resistor partition of 75k over 220k
+    // we want mV
+    measures.vcc = (val * (220 + 75) / 75 * 1000) >> 16;
+#else	
+    val = adc_sample(ADC_VCC, ADC_RES_16BIT);
+    // ADC line 0 reads Vcc/4, against VREFINT of 1V
+    // we want mV
+    measures.vcc = (val * 4 * 1000) >> 16;
+#endif
+
+    // read vpanel
+//    ztimer_sleep(ZTIMER_MSEC, 10);
+    val = adc_sample(ADC_VPANEL, ADC_RES_16BIT); 
+    // ADC line 1 reads Vpanel against VREFINT of 1V, with a resistor partition of 75k over 220k
+    // we want mV
+    measures.vpanel = (val * (220 + 75) / 75 * 1000) >> 16;
     printf("Vsupercap (mV): %ld; Vpanel(mV): %ld\n", measures.vcc, measures.vpanel);
 
     hdc3020_deinit(&hdc3020);
@@ -506,7 +555,15 @@ void board_startup(void)
     lora.bandwidth        = DEFAULT_LORA_BANDWIDTH;
     lora.spreading_factor = DEFAULT_LORA_SPREADING_FACTOR;
     lora.coderate         = DEFAULT_LORA_CODERATE;
+#ifdef F867000000    
+    lora.channel          = (867000000UL);
+#else
+#ifdef F865000000
+    lora.channel          = (865000000UL);
+#else
     lora.channel          = DEFAULT_LORA_CHANNEL;
+#endif
+#endif
     lora.power            = DEFAULT_LORA_POWER;
     lora.data_cb          = *protocol_in;
 	lora_init(&(lora));
@@ -536,21 +593,23 @@ void board_sleep(uint8_t resetCounter)
     print_persist("GO TO SLEEP");
     rtc_mem_write(0, (char *)&persist, sizeof(persist));
 printf("persist.sleep_seconds = %d\n", persist.sleep_seconds);
-    saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, ARRAY_SIZE(extwake), persist.sleep_seconds, resetCounter);
+//ant9000    saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, ARRAY_SIZE(extwake), persist.sleep_seconds, resetCounter);
+    saml21_backup_mode_enter(RADIO_OFF_NOT_REQUESTED, extwake, persist.sleep_seconds, resetCounter);
 }
 
 void board_loop(void)
 {
     puts("Starting measurements.");
     while (1) {
-        if (taskflags==0) {
-            chbsp_proc_sleep();
+//        if (taskflags==0) {
+//            chbsp_proc_sleep();
             /* We only continue here after an interrupt wakes the processor */
-        } else {
+//        } else {
             /* Sensor has interrupted - handle sensor data */
-            taskflags = 0;
+//            taskflags = 0;
+    ztimer_sleep(ZTIMER_MSEC, 900);
             handle_data_ready();
-        }
+//        }
     }
 }
 
@@ -576,7 +635,10 @@ int main(void)
 //    uint32_t now = rtt_get_counter();
 //    uint32_t now2;
 //    printf("RTT now: %" PRIu32 "\n", now);
-	
+
+#ifdef ENABLEVCC1V8
+	printf("VCC = 1V8 !!\n");
+#endif	
     main_pid = thread_getpid();
     protocol_init(*packet_received);
 
@@ -631,7 +693,7 @@ int main(void)
 			listen_to();
             break;
         default:
-			snprintf(message, sizeof(message), "Start Demo Siena\n");
+			snprintf(message, sizeof(message), "Start Demo TDK\n");
 			send_to(EMB_BROADCAST, message, strlen(message)+1);
 			lora_off();
 			puts("\nDefault ======================================================\n\n");
