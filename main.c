@@ -18,6 +18,9 @@
 
 #include "periph/rtt.h"
 
+#define ENABLE_DEBUG 1
+#include "debug.h"
+
 #if defined(BOARD_LORA3A_H10)
 #define ADC_VCC    (0)
 #define ADC_VPANEL (1)
@@ -51,7 +54,7 @@ static saml21_extwake_t extwake[]= EXTWAKE_PINS;
 #define CHIRP_SENSOR_TARGET_INT_HIST	5		// num of previous results kept in history
 #define CHIRP_SENSOR_TARGET_INT_THRESH  2		// num of target detections req'd to interrupt
 #define CHIRP_SENSOR_TARGET_INT_RESET   0		// if non-zero, target filter resets after interrupt
-#define	CHIRP_SENSOR_MAX_RANGE_MM		1000	/* maximum range, in mm */
+#define	CHIRP_SENSOR_MAX_RANGE_MM		2000	/* maximum range, in mm */
 #define	CHIRP_SENSOR_THRESHOLD_0		200	/* close range threshold (0 = use default) */
 #define	CHIRP_SENSOR_THRESHOLD_1		50	/* standard threshold (0 = use default) */
 #define	CHIRP_SENSOR_RX_HOLDOFF			0	/* # of samples to ignore at start of meas */
@@ -60,16 +63,16 @@ static saml21_extwake_t extwake[]= EXTWAKE_PINS;
 #define	MEASUREMENT_INTERVAL_MS		    1000	// 1000ms interval = 1Hz sampling
 #else
 #define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
-#define CHIRP_SENSOR_TARGET_INT_HIST	0		// num of previous results kept in history
+#define CHIRP_SENSOR_TARGET_INT_HIST	8		// num of previous results kept in history
 #define CHIRP_SENSOR_TARGET_INT_THRESH  1		// num of target detections req'd to interrupt
 #define CHIRP_SENSOR_TARGET_INT_RESET   0		// if non-zero, target filter resets after interrupt
-#define	CHIRP_SENSOR_MAX_RANGE_MM		2000	/* maximum range, in mm */
+#define	CHIRP_SENSOR_MAX_RANGE_MM		2500	/* maximum range, in mm */
 #define	CHIRP_SENSOR_THRESHOLD_0		0	/* close range threshold (0 = use default) */
 #define	CHIRP_SENSOR_THRESHOLD_1		0	/* standard threshold (0 = use default) */
 #define	CHIRP_SENSOR_RX_HOLDOFF			10	/* # of samples to ignore at start of meas */
 #define	CHIRP_SENSOR_RX_LOW_GAIN		0	/* # of samples (0 = use default) */
 #define	CHIRP_SENSOR_TX_LENGTH			0	/* Tx pulse length, in cycles (0 = use default) */
-#define	MEASUREMENT_INTERVAL_MS		    1000	// 1000ms interval = 1Hz sampling
+#define	MEASUREMENT_INTERVAL_MS		    750	// 1000ms interval = 1Hz sampling
 #endif
 #ifndef EMB_ADDRESS
 	#define EMB_ADDRESS 1
@@ -136,33 +139,33 @@ void internal_sensors_read(void);
 
 
 void waitCurrentMeasure(uint32_t milliseconds, char* step) {
-	printf("waitCurrentMeasure %s\n", step);
+	DEBUG("waitCurrentMeasure %s\n", step);
 	ztimer_sleep(ZTIMER_MSEC, milliseconds);
 }
 
 void parse_command(char *ptr, size_t len) {
 	char *token;
 	int8_t txpow=0;
-	puts("parse_command\n");
+	DEBUG("parse_command\n");
     if((len > 2) && (strlen(ptr) == (size_t)(len-1)) && (ptr[0] == '@') && (ptr[len-2] == '$')) {
 		token = strtok(ptr+1, ",");
         uint32_t seconds = strtoul(token, NULL, 0);
 //seconds = 5;
-        printf("Instructed to sleep for %lu seconds\n", seconds);
+        DEBUG("Instructed to sleep for %lu seconds\n", seconds);
 
         persist.sleep_seconds = (seconds > 0 ) && (seconds < 36000) ? (uint16_t)seconds : SLEEP_TIME_SEC;
         if ((uint32_t)persist.sleep_seconds != seconds) {
-            printf("Corrected sleep value: %u seconds\n", persist.sleep_seconds);
+            DEBUG("Corrected sleep value: %u seconds\n", persist.sleep_seconds);
         }
         token = strtok(NULL, ",");
 
 //token[0] = 'B';
 
         if (token[0]=='B') {
-			printf("Boost out selected!\n");
+			DEBUG("Boost out selected!\n");
 			persist.boost = 1;
 		} else {
-			printf("RFO out selected!\n");
+			DEBUG("RFO out selected!\n");
 			persist.boost = 0;
 		}
         token = strtok(NULL, "$");
@@ -170,7 +173,7 @@ void parse_command(char *ptr, size_t len) {
 //txpow = 14;
         if (txpow>=0) {
 			persist.tx_power = txpow;
-			printf("Instructed to tx at level %d\n",txpow);
+			DEBUG("Instructed to tx at level %d\n",txpow);
 		}
         // to be added a complete error recovery/received commands validation for transmission errors
     }
@@ -179,12 +182,12 @@ void parse_command(char *ptr, size_t len) {
 ssize_t packet_received(const embit_packet_t *packet)
 {
     // discard packets if not for us and not broadcast
-    printf("packet->header.dst = %d\n", packet->header.dst);
+    DEBUG("packet->header.dst = %d\n", packet->header.dst);
     if ((packet->header.dst != EMB_ADDRESS) && (packet->header.dst != EMB_BROADCAST)) { return 0; }
 
 
     // dump message to stdout
-    printf(
+    DEBUG(
         "{\"CNT\":%u,\"NET\":%u,\"DST\":%u,\"SRC\":%u,\"RSSI\":%d,\"SNR\":%d,\"LEN\"=%d,\"DATA\"=\"%s\"}\n",
         packet->header.counter, packet->header.network, packet->header.dst, packet->header.src,
         packet->rssi, packet->snr, packet->payload_len, packet->payload
@@ -200,7 +203,7 @@ ssize_t packet_received(const embit_packet_t *packet)
 }
 
 void print_persist(char * step) {
-	printf("%s Persist: seconds:%d counter:%d rssi:%d snr:%d power:%d boost:%d retries:%d tdkon:%d range:%d status:%d\n",
+	DEBUG("%s Persist: seconds:%d counter:%d rssi:%d snr:%d power:%d boost:%d retries:%d tdkon:%d range:%d status:%d\n",
 	step, persist.sleep_seconds, persist.message_counter, persist.last_rssi, persist.last_snr, persist.tx_power,
 	persist.boost, persist.retries, persist.tdkon, persist.lastRange, persist.sensorStatus);
 }
@@ -216,7 +219,7 @@ void listen_to(void) {
 		persist.last_rssi = packet->rssi;
 		persist.last_snr = packet->snr;
 		persist.retries = 2;
-		printf("rx rssi %d, rx snr %d, retries=%d\n",packet->rssi, packet->snr, persist.retries);
+		DEBUG("rx rssi %d, rx snr %d, retries=%d\n",packet->rssi, packet->snr, persist.retries);
 		char *ptr = packet->payload;
 		size_t len = packet->payload_len;
 		parse_command(ptr, len);
@@ -244,8 +247,8 @@ void send_to(uint8_t dst, char *buffer, size_t len)
     header.network = EMB_NETWORK;
     header.dst = dst;
     header.src = EMB_ADDRESS;
-    printf("Sending %d+%d bytes packet #%u to 0x%02X signature:%x network:%x source:%d :\n", EMB_HEADER_LEN, len, persist.message_counter, dst, header.signature, header.network, header.src);
-    printf("%s\n", buffer);
+    DEBUG("Sending %d+%d bytes packet #%u to 0x%02X signature:%x network:%x source:%d :\n", EMB_HEADER_LEN, len, persist.message_counter, dst, header.signature, header.network, header.src);
+    DEBUG("%s\n", buffer);
     if (lora_init(&(lora)) != 0) {
         puts("ERROR: cannot initialize radio.");
         puts("STOP.");
@@ -254,7 +257,7 @@ void send_to(uint8_t dst, char *buffer, size_t len)
 
     protocol_out(&header, buffer, len);
 //  lora_off();
-    puts("Sent.");
+    DEBUG("Sent.");
 }
 
 int read_word(uint8_t dev_num, uint16_t mem_addr, uint16_t * data_ptr)
@@ -309,7 +312,7 @@ static void handle_data_ready(void)
 {
     char message[MAX_PACKET_LEN];
 
-    puts("DATA READY!");
+    DEBUG("DATA READY!");
     for (size_t i=0; i < CHIRP_MAX_NUM_SENSORS; i++) {
         if (chirp_devices[i].sensor_connected) {
             measures.range = get_range(i, CH_RANGE_ECHO_ONE_WAY);
@@ -344,9 +347,9 @@ static void sensor_int_callback(ch_group_t *grp_ptr, uint8_t dev_num,
 
 void internal_sensors_init(void)
 {
-    puts("Internal Sensors init.");
+    DEBUG("Internal Sensors init.");
     if (hdc3020_init(&hdc3020, hdc3020_params) == HDC3020_OK) {
-        puts("HDC3020 init.");
+        DEBUG("HDC3020 init.");
     }
 }
 
@@ -358,10 +361,10 @@ void internal_sensors_read(void)
 //    char message[MAX_PACKET_LEN];
 	int32_t val;
 	
-    puts("Internal Sensors read.");
+    DEBUG("Internal Sensors read.");
     if (hdc3020_init(&hdc3020, hdc3020_params) == HDC3020_OK) {
         if (hdc3020_read(&hdc3020, &measures.temp, &measures.hum) == HDC3020_OK) {
-            printf("Temp: %.1f °C, RH: %.1f %%\n", measures.temp, measures.hum);
+            DEBUG("Temp: %.1f °C, RH: %.1f %%\n", measures.temp, measures.hum);
         }
     }
     // read vcc
@@ -384,7 +387,7 @@ void internal_sensors_read(void)
     // ADC line 1 reads Vpanel against VREFINT of 1V, with a resistor partition of 75k over 220k
     // we want mV
     measures.vpanel = (val * (220 + 75) / 75 * 1000) >> 16;
-    printf("Vsupercap (mV): %ld; Vpanel(mV): %ld\n", measures.vcc, measures.vpanel);
+    DEBUG("Vsupercap (mV): %ld; Vpanel(mV): %ld\n", measures.vcc, measures.vpanel);
 
     hdc3020_deinit(&hdc3020);
 
@@ -534,7 +537,7 @@ void freeze_data(void)
     offset += sizeof(chirp_devices);
     fram_write(offset, (void *)&chirp_group, sizeof(chirp_group));
     offset += sizeof(chirp_group);
-    puts("Chirp sensor data freezed.");
+    DEBUG("Chirp sensor data freezed.");
 }
 
 void thaw_data(void)
@@ -546,7 +549,7 @@ void thaw_data(void)
     offset += sizeof(chirp_devices);
     fram_read(offset, (void *)&chirp_group, sizeof(chirp_group));
     offset += sizeof(chirp_group);
-    puts("Chirp sensor data thawed.");
+    DEBUG("Chirp sensor data thawed.");
 }
 
 void board_startup(void)
@@ -574,7 +577,7 @@ void board_startup(void)
 
 void board_sleep(uint8_t resetCounter)
 {
-    puts("Entering backup mode.");
+    DEBUG("Entering backup mode.");
 
     // turn radio off
 //    lora_off();
@@ -630,22 +633,22 @@ void persist_init(void) {
 int main(void)
 {
 //	puts("\n");
-	printf("SIENA-FIRMWARE Compiled: %s,%s\n", __DATE__, __TIME__);
+	printf("DEMO-TDK-FIRMWARE Compiled: %s,%s\n", __DATE__, __TIME__);
 
 //    uint32_t now = rtt_get_counter();
 //    uint32_t now2;
 //    printf("RTT now: %" PRIu32 "\n", now);
 
 #ifdef ENABLEVCC1V8
-	printf("VCC = 1V8 !!\n");
+	DEBUG("VCC = 1V8 !!\n");
 #endif	
     main_pid = thread_getpid();
     protocol_init(*packet_received);
 
     board_startup();
-	printf("Sensor set: Address: %d Bandwidth: %d, Frequency: %ld\n            Spreading Factor: %d, Coderate: %d, Listen Time ms: %d\n",
+	DEBUG("Sensor set: Address: %d Bandwidth: %d, Frequency: %ld\n            Spreading Factor: %d, Coderate: %d, Listen Time ms: %d\n",
 			EMB_ADDRESS, lora.bandwidth, lora.channel, lora.spreading_factor, lora.coderate, LISTEN_TIME_MSEC);
-	printf("Wakeup cause = %d\n\n",saml21_wakeup_cause());
+	DEBUG("Wakeup cause = %d\n\n",saml21_wakeup_cause());
     switch(saml21_wakeup_cause()) {
         case BACKUP_EXTWAKE:
 	        rtc_mem_read(0, (char *)&persist, sizeof(persist));
@@ -653,9 +656,9 @@ int main(void)
 	        lora.power=persist.tx_power;
             uint8_t pins = saml21_wakeup_pins();
 			print_persist("EXTWAKE");
-            printf("Wakeup pins: ");
-            for(int i=0; i<8; i++) { if (pins & (1 << i)) { printf(" PA%02d", i); } }
-            printf("\n");
+            DEBUG("Wakeup pins: ");
+            for(int i=0; i<8; i++) { if (pins & (1 << i)) { DEBUG(" PA%02d", i); } }
+            DEBUG("\n");
 			internal_sensors_read();
             thaw_data();
             handle_data_ready();
