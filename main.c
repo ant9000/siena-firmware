@@ -63,13 +63,13 @@ static saml21_extwake_t extwake[]= EXTWAKE_PINS;
 #define	MEASUREMENT_INTERVAL_MS		    1000	// 1000ms interval = 1Hz sampling
 #else
 #define CHIRP_SENSOR_FW_INIT_FUNC	    ch201_gprstr_init   /* standard STR firmware */
-#define CHIRP_SENSOR_TARGET_INT_HIST	8		// num of previous results kept in history
+#define CHIRP_SENSOR_TARGET_INT_HIST	5		// num of previous results kept in history
 #define CHIRP_SENSOR_TARGET_INT_THRESH  1		// num of target detections req'd to interrupt
 #define CHIRP_SENSOR_TARGET_INT_RESET   0		// if non-zero, target filter resets after interrupt
-#define	CHIRP_SENSOR_MAX_RANGE_MM		2500	/* maximum range, in mm */
+#define	CHIRP_SENSOR_MAX_RANGE_MM		2100	/* maximum range, in mm */
 #define	CHIRP_SENSOR_THRESHOLD_0		0	/* close range threshold (0 = use default) */
 #define	CHIRP_SENSOR_THRESHOLD_1		0	/* standard threshold (0 = use default) */
-#define	CHIRP_SENSOR_RX_HOLDOFF			10	/* # of samples to ignore at start of meas */
+#define	CHIRP_SENSOR_RX_HOLDOFF			0	/* # of samples to ignore at start of meas */
 #define	CHIRP_SENSOR_RX_LOW_GAIN		0	/* # of samples (0 = use default) */
 #define	CHIRP_SENSOR_TX_LENGTH			0	/* Tx pulse length, in cycles (0 = use default) */
 #define	MEASUREMENT_INTERVAL_MS		    750	// 1000ms interval = 1Hz sampling
