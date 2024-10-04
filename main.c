@@ -35,7 +35,8 @@
 #ifdef ENABLEVCC1V8
 
 #define EXTWAKE_PINS \
-  { .pin=EXTWAKE_PIN0, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }
+  { .pin=EXTWAKE_PIN0, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
+  { .pin=EXTWAKE_PIN1, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }
 static saml21_extwake_t extwake = EXTWAKE_PINS;
 
 #else
