@@ -331,7 +331,7 @@ static void handle_data_ready(void)
 				send_to(EMB_BROADCAST, message, strlen(message)+1);
 				listen_to();
             } else {
-				printf("\nNO_TARGET !!! %f\n\n", (float)measures.range);
+				printf("\n\n             Port %u   NO_TARGET !!! %f\n\n", i, (float)measures.range);
 			}
         }
     }
