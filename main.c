@@ -33,21 +33,20 @@
 #endif
 
 #ifdef ENABLEVCC1V8
-
-#define EXTWAKE_PINS \
-  { .pin=EXTWAKE_PIN0, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
-  { .pin=EXTWAKE_PIN1, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }
-static saml21_extwake_t extwake = EXTWAKE_PINS;
-
-#else
-
 #define EXTWAKE_PINS { \
-     { .pin=EXTWAKE_PIN1, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
-     { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
+    { .pin=EXTWAKE_PIN0, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
+    { .pin=EXTWAKE_PIN1, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
+    { .pin=EXTWAKE_NONE }, \
   }
+#else
+#define EXTWAKE_PINS { \
+    { .pin=EXTWAKE_PIN1, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
+    { .pin=EXTWAKE_PIN6, .polarity=EXTWAKE_LOW, .flags=EXTWAKE_IN }, \
+    { .pin=EXTWAKE_NONE }, \
+  }
+#endif
 static saml21_extwake_t extwake[]= EXTWAKE_PINS;
 
-#endif  
 #define FRAM_POWER  GPIO_PIN(PA, 27)
 
 #if 0
